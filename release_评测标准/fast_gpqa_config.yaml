@@ -1,0 +1,32 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# GPQA Diamond 快速精度评测 — 配置文件
+
+model:
+  name: ""                              # 模型名称（留空时由 eval_wrapper.py 自动从 /v1/models 探测）
+  api_base: "http://localhost:8000/v1"  # OpenAI 兼容 API 地址（必填）
+  api_key: "EMPTY"                      # API 密钥（可选，默认 EMPTY）
+
+# 数据集缓存目录（可选，预下载后可离线评测）
+dataset_dir: ""
+
+# 数据集来源: modelscope / huggingface
+dataset_hub: "modelscope"
+
+# 评测数据集: gpqa_diamond / mmlu / math_500，可多个（空格或逗号分隔，如 "mmlu, math_500"）
+# mmlu: 5-shot，--limit 为每子集题数；默认 20/子集 = 1140 题（--limit 100 = 57 子集 × 100 = 5700 题）
+# math_500: 0-shot，--limit 亦为每子集题数；默认 40/等级 = 200 题（5 子集 × limit；--limit 0 = 全量 500 题）
+# 默认题数降采样为 2026-08-14 定稿（迁移成本优化，gap 实测见记忆 eval-sampling-gap-measured）
+dataset: "gpqa_diamond"
