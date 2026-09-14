@@ -25,13 +25,38 @@
 
 ## 镜像
 
+### 推理镜像（vLLM + MetaX）
+
 | 项目 | 值 |
 |------|----|
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
 | vLLM 版本 | 0.24.0（注意：报告基线是 0.20.2，此镜像更高） |
-| 容器命名习惯 | `<模型名>_flagos`（示例镜像默认 `xingchen4`） |
+| 容器命名习惯 | `<模型名>_flagos` |
 
 > ⚠ 此镜像 vLLM 为 **0.24.0**，与失败报告实测的 0.20.2 不同。0.24 重构了 MLA impl 接口（新增 `forward_mha`/`forward_mqa`），plugin-FL 需对齐；详见 [[KNOWLEDGE]] 与 xingchen4 PR 记录。
+
+### 评测镜像（evalscope，独立容器）
+
+| 项目 | 值 |
+|------|----|
+| 镜像 | `harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest` |
+| evalscope 版本 | 1.11.1 |
+| modelscope 版本 | 1.40.0 |
+| 基础镜像 | Ubuntu 22.04（无 GPU 依赖，体积约 2.5GB） |
+| 容器命名习惯 | `<模型名>-eval` |
+| 首次构建 | 2026-09-14，metax-60，通过容器手动安装后 commit |
+
+evalscope 容器与 vLLM 容器**隔离运行**，避免 anyio/starlette 等依赖冲突。两个容器均用 `--network host`，eval 容器直接打 `http://127.0.0.1:8000/v1`。起容器时**不挂** `/dev/dri`、`/dev/mxcd`。
+
+```bash
+# 起评测容器（标准用法）
+docker run -d --rm \
+  --name ${model_name}-eval \
+  --network host \
+  -v /public-flash/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest \
+  sleep infinity
+```
 
 ## 评测标准
 
