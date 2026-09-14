@@ -20,25 +20,26 @@ TP 计算：3.8B × 2 bytes(bf16) ≈ 7.6GB，单卡 63.6GB → TP=1。
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `metax-___` |
+| 宿主机 | `metax-60` |
 | 容器名 | `Phi-3-mini-128k-instruct_flagos` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
 | 模型路径 | `/models/Phi-3-mini-128k-instruct` |
-| 卡号 | `MACA_VISIBLE_DEVICES=___` |
-| 实际 vLLM 版本 | |
+| 卡号 | `MACA_VISIBLE_DEVICES=0`（GPU 0，56GB 已占用） |
+| 实际 vLLM 版本 | 0.24.0 |
 
 ---
 
 ## Step 0：登录 + 查卡
 
 ```bash
-ssh metax-57   # 选空闲机
+ssh metax-60
 mx-smi
 ```
 
 **mx-smi 输出节选**：
 ```
-（上机后粘贴）
+GPU 0: MetaX C550, 57252/65536 MiB 已占用（本模型服务进程）
+GPU 1-7: 858/65536 MiB 空闲
 ```
 
 ---
@@ -93,7 +94,7 @@ modelscope download --model LLM-Research/Phi-3-mini-128k-instruct \
 
 ### 环境变量（每次迭代更新）
 
-**第1次尝试**（SOP 默认黑名单）：
+**第1次尝试**（SOP 默认黑名单，2026-09-14 metax-60）：
 ```bash
 export GEMS_VENDOR=metax
 export VLLM_PLUGINS=fl
@@ -123,7 +124,7 @@ vllm serve /models/Phi-3-mini-128k-instruct \
 
 **启动结果**：
 ```
-（贴 "Application startup complete" 行，或报错）
+Application startup complete（服务正常启动，端口 8000）
 ```
 
 ### 冒烟验证
@@ -171,7 +172,7 @@ python3 accuracy_compare.py \
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | 题数 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------|------------------------|------|
-| 第1次 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | | | | |
+| 第1次（V3，plugin-FL 开） | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | 28% | 50 | 1（不达标） | 2026-09-14 metax-60，evalscope 1.11.1 |
 | 第2次 | | | | | |
 
 **verdict.json 原文**（最终达标）：
@@ -182,18 +183,32 @@ python3 accuracy_compare.py \
 ---
 
 ## 现象
-（上机后填）
+
+- 服务正常启动（GPU 0，TP=1，端口 8000），`Application startup complete`
+- evalscope 1.11.1 评测 50 题，耗时 ~447 秒（约 7.5 分钟）
+- `truncation_detected: false`，`runaway_count: 0`，无截断无复读
+- evalscope 报告文件（`outputs/gpqa_diamond/20260914_075702/reports/Phi-3-mini-128k-instruct/gpqa_diamond.json`）：`metrics[0].score = 0.28`
+- gpqa.json 写出 `score: null`（parse_result bug，已在 commit 5b70c34 修复）
 
 ## 定位
-（精度退化算子名 / 是否随机抖动）
+
+- 精度结果：28%（14/50 题正确）
+- NV 基线：33.0%（16.5/50 题对应）
+- 相对退化：(33.0 - 28.0) / 33.0 = **15.15%**，远超 5% 阈值
+- 绝对差 2.5 题，超过小样本容忍上限（≤2 题），无法用小样本容忍达标
+- 退化原因尚未定位：可能是 plugin-FL 算子精度问题，也可能是 vLLM 0.24.0 相比 0.20.2 在 Phi-3 模型上有精度回退。需进一步二分法定位
 
 ## 处置
-（黑名单调整 / 全量198题确认）
+
+- 本轮未做黑名单调整，仅跑了第 1 次迭代（SOP 默认黑名单）
+- 下一步：关闭 plugin（`VLLM_PLUGINS=` 不设）跑裸 vLLM V1 基线，确认是 plugin 引入的退化还是 vLLM 0.24.0 本身的回退
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：28%（V3，plugin-FL 开，默认黑名单）
+- NV 基线：33.0%
+- 达标判定：❌ 不达标（相对退化 15.15%，accuracy_compare 退出码 1）
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+Phi-3-mini-128k-instruct 在 metax vLLM 0.24.0 + plugin-FL 默认黑名单下 GPQA 28%（NV 33%，相对退化 15%），需跑 V1 裸 vLLM 基线确认退化来源（plugin vs vLLM 版本）。

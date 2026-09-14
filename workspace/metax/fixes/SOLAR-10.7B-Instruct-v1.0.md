@@ -19,12 +19,12 @@ TP 计算：10.7B × 2 bytes(bf16) ≈ 21.4GB，单卡 63.6GB，预留 30% → �
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `metax-___`（上机后填） |
+| 宿主机 | `metax-60` |
 | 容器名 | `SOLAR-10.7B-Instruct-v1.0_flagos` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
-| 模型路径 | `/models/SOLAR-10.7B-Instruct-v1.0`（确认共享盘有后填） |
-| 卡号 | `MACA_VISIBLE_DEVICES=___` |
-| 实际 vLLM 版本 | `python -c "import vllm; print(vllm.__version__)"` 结果填这里 |
+| 模型路径 | `/models/SOLAR-10.7B-Instruct-v1.0`（2026-09-14 下载中） |
+| 卡号 | `MACA_VISIBLE_DEVICES=1`（GPU 1，空闲） |
+| 实际 vLLM 版本 | 0.24.0 |
 
 ---
 

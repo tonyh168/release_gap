@@ -25,12 +25,12 @@ TP 计算：MoE 模型权重文件约 60GB（所有专家总重量）→ 单卡 
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `metax-___` |
+| 宿主机 | `metax-60` |
 | 容器名 | `Qwen3-Coder-30B-A3B-Instruct_flagos` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
-| 模型路径 | `/models/Qwen3-Coder-30B-A3B-Instruct` |
-| 卡号 | `MACA_VISIBLE_DEVICES=0,1,2,3`（TP=4）|
-| 实际 vLLM 版本 | |
+| 模型路径 | `/models/Qwen3-Coder-30B-A3B-Instruct`（2026-09-14 下载中） |
+| 卡号 | `MACA_VISIBLE_DEVICES=2,3,4,5`（TP=4，GPU 2-5 空闲） |
+| 实际 vLLM 版本 | 0.24.0 |
 
 ---
 
