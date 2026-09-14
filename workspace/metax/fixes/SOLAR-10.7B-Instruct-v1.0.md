@@ -191,29 +191,50 @@ python3 /workspace/eval_scripts/accuracy_compare.py \
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------------------------|------|
-| 第1次 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | | | |
-| 第2次 | （如需调整填这里） | | | |
+| 第1次 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | 30% | 0（达标，小样本噪声容忍） | 2026-09-14 metax-60，NV基线34%，相对退化11.76%但绝对差=2题≤阈值 |
 
 **verdict.json 原文**（最终达标的那次）：
 ```json
-（粘贴内容）
+{
+  "model": "SOLAR-10.7B-Instruct-v1.0",
+  "metric": "gpqa_diamond",
+  "nv": {"score": 34.0, "source": "NV 实测"},
+  "current": {"score": 30.0, "mode": "standard"},
+  "rel_drop_pct": 11.76,
+  "abs_diff": -4.0,
+  "diff_questions": 2.0,
+  "noise_zone": true,
+  "noise_adjusted": true,
+  "message": "精度达标(小样本噪声容忍): 当前=30.00%, NV=34.00%, 相对退化=11.76% 虽超容差5.0%，但绝对差异4.00%=2.00题 ≤ 2题噪声阈值，属小样本评测方差，判定达标"
+}
 ```
 
 ---
 
 ## 现象
-（上机后填：贴关键日志 / 评测分数 / plugin报错行）
+
+- 第1次启动失败：`--max-model-len 32768` 超过模型 `config.json` 中 `max_position_embeddings=4096`，vLLM 抛 `ValidationError` 拒绝启动
+- 第2次启动（`--max-model-len 4096`）：`Application startup complete`，正常
+- evalscope 评测 50 题，耗时 ~6m 33s，无截断，无复读
+- `gpqa.json` 写出 `score: null`（evalscope 1.11.1 解析 bug，从 workdir 兜底读得 30%）
 
 ## 定位
-（填：涉及哪个算子 / plugin-FL 哪层报错）
+
+- 启动问题：SOLAR-10.7B 基于 LLaMA2，最大上下文长度仅 4096，不支持 32768 的 `max-model-len`
+- 精度结果：30%（15/50 题正确），NV 基线 34%，相对退化 11.76%
+- 绝对差仅 2.0 题（= 4%），触发小样本噪声容忍阈值（≤2 题），判定达标
 
 ## 处置
-（填：黑名单做了哪些调整 / 调了哪些参数）
+
+- 去掉 `--max-model-len 32768`，改为 `--max-model-len 4096`（即模型实际上下文长度）
+- 精度本轮无需调整黑名单，默认黑名单下已达标
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：0=达标
+
+- 修复后 GPQA 正确率：30%（15/50 题）
+- NV 基线：34.0%
+- 达标判定：✅ 达标（小样本噪声容忍，accuracy_compare 退出码 0）
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+LLaMA2 系模型（SOLAR、LLaMA2 等）`max_position_embeddings=4096`，起 vLLM 时不传 `--max-model-len` 或显式传 4096；传更大值会被 vLLM 拒绝启动（ValidationError）。
