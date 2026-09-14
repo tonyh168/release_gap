@@ -12,13 +12,14 @@
 |------|------|
 | `fast_gpqa.py` | 对 OpenAI 兼容服务跑题、判分，输出精度 JSON |
 | `accuracy_compare.py` | 两份结果对比 或 对 NV 基线对比，5% 相对退化阈值 |
-| `nv_baseline.yaml` | NV 参考精度基线（123 模型，查表用） |
+| `nv_baseline.yaml` | NV 参考精度基线（376 模型 key，实测已填分数：mmlu 207 / math_500 207 / gpqa 133 / mm_star 38；查表用） |
 
 ## 达标口径
 
 - **相对退化 ≤ 5%** 为达标。
 - 首选对 NV 基线判定：`(v2 - nv)/nv ≥ -5%`。
-- NV 表查不到该模型（退出码 3）时，改**两轮对比**：参考环境跑 `baseline.json`，本平台跑 `current.json`，`(v1-v2)/v1 ≤ 5%`。
+- **指标回退顺序**：优先 `gpqa_diamond`；若该模型在 `nv_baseline.yaml` 里没有 gpqa 基线（退出码 3 或提示"缺 gpqa_diamond 指标"），改用它**确实有基线**的数据集，按 `math_500` → `mmlu` 顺序回退，评测和判定都带上对应 `--dataset` / `--metric`。（实测基线覆盖：mmlu 207 个、math_500 207 个、gpqa_diamond 133 个、mm_star 38 个，故 gpqa 缺失时多半有 math_500/mmlu 兜底。）
+- 若某模型**任何数据集都查不到 NV 基线**，改**两轮对比**：同机先起裸 vLLM 跑 `baseline.json`，再起 plugin-FL 服务跑 `current.json`，`(v1-v2)/v1 ≤ 5%`。
 - **小样本容忍**：题数 ≤ 100 时，若超阈值但绝对差 ≤ 2 题，仍判达标（避免 50 题里 1~2 题抖动误判）。
 
 ## 数据集

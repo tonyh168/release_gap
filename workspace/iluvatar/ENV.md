@@ -6,28 +6,43 @@
 
 | 项目 | 值 | 说明 |
 |------|----|----|
-| GPU | BI-V150，单机 16 卡（显存报告未记，按 `<容量>GB`） | 卡数多但单卡算力弱，TP 可开大 |
-| 宿主机 IP / 登录 | `<host-ip / ssh 账号>` | 现场填写 |
+| GPU | 天数 BI 系列（corex 生态），单机多卡 | 参考模型 XingChen4 用 TP=8（卡 8~15） |
+| 宿主机（ssh 免密） | `iluvatar-117` `iluvatar-211` | |
 | 设备节点 | `/dev/iluvatar` | 启容器时透传（见模板 01） |
-| 驱动自检 | `ixsmi` | 容器内应能看到 16 卡 |
+| 驱动自检 | `ixsmi` | |
+| 共享存储 | 宿主机模型盘 → 容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`） | |
 
 ## 软件栈（FlagOS，报告实测版本）
 
 | 组件 | 版本 | 备注 |
 |------|------|------|
-| 推理后端 vllm | 0.20.2 | |
-| plugin-FL | 0.2.0 | |
-| FlagGems | 5.0.0 | |
+| 推理后端 vllm | 失败报告实测 0.20.2；**当前 xingchen4-0907 镜像为 vllm_fl 0.24.0** | |
+| plugin-FL | 0.2.0（报告期） | |
+| FlagGems | 报告期 5.0.0；镜像预装 5.3.4.post1.dev11 | |
 | Flagtree | 0.6.0 | |
 | FlagCX | 未启用（cxnone） | |
 | 权重/计算数制 | bf16 | |
+
+> 说明：上表「报告期」列取自旧失败报告（0.20.2 栈）；实际用[[镜像]]里 xingchen4-0907（vllm_fl 0.24.0）复现修复，以容器内 `pip show` 实测为准。
 
 ## 镜像
 
 | 项目 | 值 |
 |------|----|
-| 镜像仓库 / tag | `<iluvatar flagos 镜像地址:tag>` |
+| 镜像仓库 / tag | `harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907` |
+| 内含 | corex4.5.0 / flagtree0.6.0 / triton3.6.0 / cxnone / vllm_fl 0.24.0 |
 | 容器命名习惯 | `<模型名>_flagos` |
+
+## 起服务运行时（XingChen4-0907 实测参考）
+
+| 项目 | 值 |
+|------|----|
+| 环境变量 | `GEMS_VENDOR=iluvatar` / `VLLM_PLUGINS=fl` / `CUDA_VISIBLE_DEVICES=8..15` / `VLLM_WORKER_MULTIPROC_METHOD=spawn` / **`VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable`（必设否则 hang）** / `VLLM_ENGINE_ITERATION_TIMEOUT_S=72000` / `VLLM_RPC_TIMEOUT=72000000` / `VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200` |
+| serve flags | `--dtype bfloat16 --tensor-parallel-size 8 --max-model-len 32768 --gpu-memory-utilization 0.9 --attention-backend TRITON_MLA --chat-template <目录>/chat_template.jinja --enforce-eager --trust-remote-code` |
+| 镜像内组件 | `vllm-plugin-FL`(含 corex patch) / `FlagGems-vllm`(GEMS_VENDOR=iluvatar) / FlagGems 预装 5.3.4.post1.dev11 |
+| 模型名约定 | `model_name` 取 NV 表 key；served-model-name / 评测 model-name / 日志目录统一用它 |
+| 日志/结果落盘 | `/models/release_run_logs/${model_name}/` |
+| 评测执行位置 | 同一台 iluvatar 宿主机常驻的 `llm-eval` 容器 |
 
 ## 版本口径（V1–V4）
 

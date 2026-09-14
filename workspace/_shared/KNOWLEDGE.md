@@ -17,10 +17,30 @@
   **处置**：换有完整编译产物的镜像版本，或在容器内重新编译 `pip install vllm --no-build-isolation`（耗时，备选）。
   **来源**：hygon/Light-R1-7B-DS
 
+- **现象**：天数平台服务起来但一直 hang，无任何输出，不报错。
+  **根因**：`sort` / `sort_stable` 被 FlagGems 接管后在天数算子上死锁。
+  **处置**：起服务前必设 `VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable`，不加必 hang。
+  **来源**：iluvatar/XingChen4-0907
+
 - **现象**：大参数量模型（30B/32B）比小模型更容易崩溃。
   **根因**：算子对大 batch / 大隐层维度的覆盖不完整。
   **处置**：优先用 TP=8 最大并行，降低单卡压力；若仍崩溃，参考"服务启动失败"条目关算子。
   **来源**：metax 三个 32B 模型 vs 5B 模型通过率差异
+
+- **现象**：换高版本 vLLM（0.24）后 plugin-FL 无法实例化，报 `Can't instantiate abstract class FlashMLAImpl ... 'forward_mha', 'forward_mqa'`，或 `ModelRegistry` 导入失败。
+  **根因**：vLLM 0.24 重构了 MLA impl 接口并把 `vllm` 变成 namespace package，plugin-FL 未对齐。
+  **处置**：plugin-FL 侧补 `forward_mha/forward_mqa`（代理到已有 prefill/decode）、`ModelRegistry` 改从 `vllm.model_executor.models` 导入、`dcp_world_size` 初值 `-1`。选镜像时确认 plugin-FL 与该 vLLM 版本已适配。
+  **来源**：metax/XingChen4-0907（镜像 vllm 0.24.0，见 metax PR 记录）
+
+- **现象**：eager/短 prompt 冒烟全 PASS，一上真实评测（长 prompt）所有请求 500 / `EngineDeadError`，报 `flash_attn_varlen_func() got an unexpected keyword argument 'fa_version'`。
+  **根因**：短 prompt 只走 decode，长 prompt 才走 MLA prefill 变长注意力；MetaX 的 FA 无 `fa_version` 形参，被上游 partial 注入即崩。
+  **处置**：①冒烟必须用长 prompt（直接跑几题 GPQA）验证，别只测 `1+1`；②plugin-FL 去掉 MLA prefill 路径的 fa_version partial 注入。
+  **来源**：metax/XingChen4-0907
+
+- **现象**：MetaX 上 FlagGems 的 GEMM 类 kernel 编译崩（`PassManager::run failed` / `shape_judge` 断言），黑名单里写了却没拦住。
+  **根因**：`VLLM_FL_FLAGOS_BLACKLIST` 按函数 `__name__`（下划线 `mm_out`/`bmm_out`）匹配，写成 aten 键（点号 `mm.out`）一个都匹配不上。
+  **处置**：`.out` 变体一律写下划线；graph 模式黑名单需补全 `mm,mm_out,bmm,bmm_out,linear,...`，把 GEMM 挡回原生 aten。
+  **来源**：metax/XingChen4-0907
 
 ---
 

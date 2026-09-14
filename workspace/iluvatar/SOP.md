@@ -7,65 +7,138 @@
 
 ## 0. 前置
 
-- 硬件：BI-V150 × 16。单卡算力偏弱、卡多，TP 可开大（32B 可 TP=8 或更高）。
-- 登录宿主机：`ssh <host-ip>`（账号见 ENV）。
-- 确认驱动：`ixsmi` 能看到 16 张卡。
+- 硬件：天数 BI 系列（corex 生态），单机多卡。参考模型 XingChen4 用 **TP=8**（`CUDA_VISIBLE_DEVICES=8..15`）。
+- 宿主机（ssh 免密直连）：`iluvatar-117` `iluvatar-211`。
+  ```bash
+  ssh iluvatar-117
+  ixsmi   # 天数查卡：看每卡显存/进程；这机器一般独占，但有占用先问清楚再用，别抢卡
+  ```
+- 镜像：`harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907`（corex4.5.0 / flagtree0.6.0 / triton3.6.0 / vllm_fl 0.24.0）。
+- 共享存储：宿主机模型盘挂到容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`）。
 
 ## 1. 起容器
 
-用 `_shared/templates/01_start_container.sh`，`VENDOR=iluvatar`，透传 `/dev/iluvatar`：
+参考实测（`_shared/templates/01_start_container.sh` 的 iluvatar 变体），透传 `/dev/iluvatar`：
 
 ```bash
+IMAGE=harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907
 docker run -itd --name <模型名>_flagos \
   --device=/dev/iluvatar \
-  --ipc=host --network=host \
-  -v <模型目录>:/models -v <workspace>:/flagos-workspace \
-  <iluvatar flagos 镜像:tag> bash
+  --ipc=host --network=host --shm-size 64g \
+  -v /public-flash/models:/models \
+  ${IMAGE} bash
 docker exec -it <模型名>_flagos bash
+# 容器内自检
 ixsmi
-python -c "import vllm; print(vllm.__version__)"   # 应为 0.20.2
+python -c "import vllm; print(vllm.__version__)"   # 应为 0.24.0
 ```
+
+> 镜像内组件安装（若需重装 / 换仓，参考 XingChen4-0907 实测）：
+> ```bash
+> cd /workspace/vllm-plugin-FL && pip install --no-build-isolation --no-deps -e .      # 含 corex patch
+> cd /workspace/FlagGems-vllm && GEMS_VENDOR=iluvatar pip install -v -e .              # mHC pre / scaled_int8_quant
+> # FlagGems 镜像预装 5.3.4.post1.dev11，通常不用换仓
+> ```
 
 ## 2. 下模型
 
+> ⚠ **约定**：本项目所有模型均以 **ModelScope 为唯一来源**。流程是先把权重拉到容器内 `/models/<模型名>`，再由 `vllm serve` 从本地路径加载；不直接用远程 URL 起服务。若某模型在 ModelScope 上搜不到，**立即停下并报告给发起人**，不自行换源替代。
+
 ```bash
-modelscope download --model <权重来源，如 Qwen/QwQ-32B> \
+pip install -q modelscope
+modelscope download --model <ModelScope仓库/模型ID，如 Qwen/QwQ-32B> \
   --local_dir /models/<模型名>
+# 若命令报 404 / model not found → 停止，把模型名和报错截图报给发起人，不要换其他来源自行处理
 ls /models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
 ```
 
 ## 3. 起 vLLM 服务
 
-`_shared/templates/03_serve_vllm.sh`。**先 V1 裸服务确认能起，再逐级开组件。**
+> **模型名约定**：`model_name` 取 **NV 基线表（`nv_baseline.yaml`）里的 key**，全流程一致。评测 `--nv-baseline` 靠它自动命中基线。
+> ```bash
+> model_name=<NV表中的key>   # 如 QwQ-32B / TinyR1-32B-Preview / OpenThinker-7B / MiroThinker-v1.5-30B / Phi-3-medium-128k-instruct / SOLAR-10.7B-Instruct-v1.0
+> ```
+
+> **不必纠结 V1/V3 版本口径**：修复目标就是把服务跑起来、跑对。直接进容器用 **plugin-FL + vLLM**（`GEMS_VENDOR=iluvatar` + `VLLM_PLUGINS=fl`）起服务、评测过关即可，无需按 V1/V2/V3 分层复现。文末的版本口径表仅作术语对照。
+
+FlagOS 后端由环境变量启用（`GEMS_VENDOR=iluvatar` + `VLLM_PLUGINS=fl`）。以 XingChen4-0907 实测为参考：
+
+> **TP 选卡原则**：TP 取"模型权重能装进卡内，且每张卡还剩 30–40% 显存空余"的最小整数（1/2/4/8）。
+> 先用 `ixsmi` 确认单卡显存大小，再估算：`TP = ceil(模型权重 GB × 1.2 / 单卡显存 GB)`，取 2 的幂次向上取整。
+> 例：7B bf16 ~14 GB，单卡 32 GB → TP=1；32B bf16 ~64 GB，单卡 32 GB → TP=4。
+> XingChen4-0907 参考用 TP=8（CUDA_VISIBLE_DEVICES=8..15）。若 OOM，先增大 TP，再降 `--max-model-len`，再降 `--gpu-memory-utilization`。
 
 ```bash
-VLLM_USE_FLAGGEMS=0 vllm serve /models/<模型名> \
-  --served-model-name <模型名> \
+export GEMS_VENDOR=iluvatar
+export VLLM_PLUGINS=fl
+export CUDA_VISIBLE_DEVICES=8,9,10,11,12,13,14,15     # 用几张卡就列几张
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable      # ⚠ 必设，否则 hang
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=72000
+export VLLM_RPC_TIMEOUT=72000000
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
+
+mkdir -p /models/release_run_logs/${model_name}
+vllm serve /models/<权重目录，若与 NV key 同名即用 ${model_name}> \
+  --served-model-name ${model_name} \
+  --dtype bfloat16 \
   --tensor-parallel-size 8 \
-  --port 8000 --dtype bfloat16 \
-  --max-model-len <32768，thinking 模型建议放大到 20000+ 输出预算> \
-  --gpu-memory-utilization 0.90 --trust-remote-code \
-  2>&1 | tee /flagos-workspace/serve_<模型名>.log
+  --max-model-len <32768，thinking 模型放大输出预算> \
+  --gpu-memory-utilization 0.9 \
+  --port 8000 \
+  --attention-backend TRITON_MLA \
+  --chat-template <模型目录>/chat_template.jinja \
+  --enforce-eager \
+  --trust-remote-code \
+  2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
 
-- **服务启动失败**（QwQ/TinyR1/Phi-3-medium/MiroThinker 都栽在这）→ 抓栈定位缺实现的算子，先关 FlagGems 跑通 V1，再逐步开算子白名单。见 [[KNOWLEDGE]] 一。
-- 大模型崩溃优先加大 TP（本平台 16 卡资源足）降单卡压力。
+- 日志 `Application startup complete` 即就绪。
+- **`VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable` 必设**，否则服务 hang（天数实测强坑）。
+- **服务启动失败**（QwQ/TinyR1/Phi-3-medium/MiroThinker 都栽在这）→ 抓栈定位缺实现的算子，加进 `VLLM_FL_FLAGOS_BLACKLIST` 挡回原生，或先关 plugin 跑通再逐步开。见 [[KNOWLEDGE]] 一。
+- `--attention-backend TRITON_MLA` 是 MLA 类模型实测值；`--chat-template` 仅当模型目录带 `chat_template.jinja` 时加。
+- 大模型崩溃优先加大 TP 降单卡压力。
+
+服务存活自检：
+
+```bash
+curl -s http://localhost:8000/v1/models
+curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"model":"'"${model_name}"'","messages":[{"role":"user","content":"中国的首都是哪里？"}],"max_tokens":64,"temperature":0}'
+```
 
 ## 4. 评测判定
 
+评测脚本对**已运行的 vLLM 服务**（`http://127.0.0.1:8000/v1`）跑题。`llm-eval` 容器**不常驻**，两种落地方式，按现场选：
+
+- **方式 A（首选，省事）**：直接在**起服务的同一个容器**里跑评测 —— 它已有 python，`--network host` 下 `127.0.0.1:8000` 直连。把 `release_评测标准` 放到容器 `/workspace/release_评测标准`（宿主机 `docker cp` 或挂载进去）。
+- **方式 B**：确需隔离时再单独拉一个评测容器（能装 evalscope 即可），同样 `--network host`。
+
 ```bash
-cd <release_评测标准 路径>
+# 宿主机：把评测标准拷进容器 /workspace（若起容器时没挂载）
+docker cp /path/to/release_评测标准 <模型名>_flagos:/workspace/release_评测标准
+
+# 进容器跑评测
+docker exec -it <模型名>_flagos /bin/bash
+cd /workspace/release_评测标准
 pip install -q 'evalscope==1.5.1' requests pyyaml
-python3 fast_gpqa.py --model-name <模型名> \
-  --api-base http://localhost:8000/v1 \
-  --output /flagos-workspace/eval_out/<模型名>/gpqa.json
+
+model_name=<与起服务时相同的 NV key>
+# 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric
+python3 fast_gpqa.py --model-name ${model_name} \
+  --api-base http://127.0.0.1:8000/v1 \
+  --output /models/release_run_logs/${model_name}/gpqa.json
 python3 accuracy_compare.py \
-  --v2 /flagos-workspace/eval_out/<模型名>/gpqa.json \
-  --nv-baseline <NV基线表中的模型名> \
+  --v2 /models/release_run_logs/${model_name}/gpqa.json \
+  --nv-baseline ${model_name} \
   --nv-baseline-file nv_baseline.yaml --json \
-  --output /flagos-workspace/eval_out/<模型名>/verdict.json
+  --output /models/release_run_logs/${model_name}/verdict.json
+# 退出码 0=达标 1=不达标 2=参数/文件错 3=NV表无此模型或缺该指标
 ```
 
+- `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
+- **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 同机起裸 vLLM 做 V1 基线两轮对比。
+- 评测输出与 serve 日志同落 `/models/release_run_logs/${model_name}/`，一个模型一个目录。
 - **评测中途中断**（OpenThinker-7B 跑到 mmlu 145/1140 停）→ 先 `--limit 20` 小样本验稳定，查 serve 日志有无 OOM/CUDA error，再跑全量。见 KNOWLEDGE 五。
 - thinking 模型（QwQ 等）50 题可能 6h+，勿中断。
 
