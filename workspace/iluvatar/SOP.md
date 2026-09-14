@@ -83,7 +83,6 @@ vllm serve /models/<权重目录，若与 NV key 同名即用 ${model_name}> \
   --served-model-name ${model_name} \
   --dtype bfloat16 \
   --tensor-parallel-size 8 \
-  --max-model-len <32768，thinking 模型放大输出预算> \
   --gpu-memory-utilization 0.9 \
   --port 8000 \
   --attention-backend TRITON_MLA \
