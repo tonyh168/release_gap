@@ -25,13 +25,14 @@
 
 ```bash
 IMAGE=harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4
-docker run -itd --name <模型名>_flagos \
+model_name=<NV表中的key，如 light-r1-7b-ds>   # 容器名用小写，能分辨模型即可
+docker run -itd --name flagrelease-fix-${model_name} \
   --device=/dev/kfd --device=/dev/dri \
   --security-opt seccomp=unconfined --group-add video \
   --ipc=host --network=host --shm-size 64g \
   -v /public-flash/models:/models \
   ${IMAGE} bash
-docker exec -it <模型名>_flagos bash
+docker exec -it flagrelease-fix-${model_name} bash
 # 容器内自检
 source /opt/dtk-26.04-DCC2602-0317/env.sh
 hy-smi

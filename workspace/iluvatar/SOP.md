@@ -22,12 +22,13 @@
 
 ```bash
 IMAGE=harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907
-docker run -itd --name <模型名>_flagos \
+model_name=<NV表中的key，如 qwq-32b>   # 容器名用小写，能分辨模型即可
+docker run -itd --name flagrelease-fix-${model_name} \
   --device=/dev/iluvatar \
   --ipc=host --network=host --shm-size 64g \
   -v /public-flash/models:/models \
   ${IMAGE} bash
-docker exec -it <模型名>_flagos bash
+docker exec -it flagrelease-fix-${model_name} bash
 # 容器内自检
 ixsmi
 python -c "import vllm; print(vllm.__version__)"   # 应为 0.24.0

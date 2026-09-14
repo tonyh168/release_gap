@@ -23,8 +23,9 @@
 
 ```bash
 IMAGE=harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907
+model_name=<NV表中的key，如 exaone-4.0-32b>   # 容器名用小写，能分辨模型即可
 docker run -d --rm \
-  --name <模型名>_flagos \
+  --name flagrelease-fix-${model_name} \
   --network host \
   --shm-size 64g \
   --device /dev/dri:/dev/dri:rwm \
@@ -32,7 +33,7 @@ docker run -d --rm \
   -v /public-flash/models:/models \
   ${IMAGE} \
   sleep infinity
-docker exec -it <模型名>_flagos /bin/bash
+docker exec -it flagrelease-fix-${model_name} /bin/bash
 # 容器内自检
 mx-smi
 python -c "import vllm; print(vllm.__version__)"   # 此镜像应为 0.24.0
