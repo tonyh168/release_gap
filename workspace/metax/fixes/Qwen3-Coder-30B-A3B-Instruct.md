@@ -144,9 +144,9 @@ vllm serve /models/Qwen3-Coder-30B-A3B-Instruct \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
 
-**启动日志关键行**（贴 startup complete 或 traceback）：
+**启动日志关键行**（2026-09-14 metax-60）：
 ```
-（粘贴）
+(APIServer pid=120) INFO:     Application startup complete.
 ```
 
 **特别检查点**：若日志出现以下任意一条，按说明处理：
@@ -183,11 +183,18 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 ```
 
 **冒烟结果**：
-- 短 prompt：☐ 正常 / ☐ 报错
-- 长 prompt：☐ 正常 / ☐ 500错误（贴报错）
+- 短 prompt：☑ 正常（"1 + 1 = 2"）
+- 长 prompt：☑ 正常（MLA prefill 路径正常，无 forward_mha/forward_mqa 报错）
 
 ```
-（长 prompt 输出节选或报错）
+from typing import Optional, Any
+
+class ListNode:
+    """链表节点类"""
+    
+    def __init__(self, val: int = 0, next_node: Optional['ListNode'] = None):
+        """初始化链表节点
+（输出正常，无截断，无 fa_version 报错）
 ```
 
 ---

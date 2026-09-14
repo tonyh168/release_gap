@@ -98,7 +98,19 @@ nohup /opt/conda/bin/modelscope download --model upstage/SOLAR-10.7B-Instruct-v1
 
 ### 实际使用的完整环境变量（每次迭代更新此块）
 
-**第1次尝试**（黑名单：SOP 默认值，GPU 1，端口 8001）：
+**第1次尝试**（`--max-model-len 32768`，2026-09-14 metax-60）：
+
+报错：
+```
+pydantic_core._pydantic_core.ValidationError: User-specified max_model_len (32768) is greater
+than the derived max_model_len (max_position_embeddings=4096.0).
+To allow overriding this maximum, set the env var VLLM_ALLOW_LONG_MAX_MODEL_LEN=1.
+```
+
+原因：SOLAR-10.7B-Instruct-v1.0 基于 LLaMA2，`config.json` 中 `max_position_embeddings=4096`，
+指定 32768 超出模型实际上下文长度，vLLM 拒绝启动。
+
+**第2次尝试**（修正 `--max-model-len 4096`，GPU 1，端口 8001）：
 ```bash
 export GEMS_VENDOR=metax
 export VLLM_PLUGINS=fl
@@ -113,22 +125,22 @@ export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 ```bash
 model_name=SOLAR-10.7B-Instruct-v1.0
 mkdir -p /models/release_run_logs/${model_name}
-vllm serve /models/SOLAR-10.7B-Instruct-v1.0 \
+/opt/conda/bin/vllm serve /models/SOLAR-10.7B-Instruct-v1.0 \
   --served-model-name ${model_name} \
   --dtype bfloat16 \
   --tensor-parallel-size 1 \
-  --max-model-len 32768 \
+  --max-model-len 4096 \
   --gpu-memory-utilization 0.9 \
   --port 8001 \
   --enforce-eager \
   --no-enable-chunked-prefill \
   --trust-remote-code \
-  2>&1 | tee /models/release_run_logs/${model_name}/serve.log
+  >> /models/release_run_logs/${model_name}/serve.log 2>&1 &
 ```
 
 **启动结果**：
 ```
-（贴 "Application startup complete" 那行，或报错关键行）
+(APIServer pid=568) INFO:     Application startup complete.
 ```
 
 ### 冒烟验证（长 prompt，必须做，别只测 1+1）
@@ -142,8 +154,10 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 **冒烟输出节选**：
 ```
-（贴 response 里 content 字段的前100字）
+1 + 1 equals 2.
 ```
+
+✅ 服务正常响应（2026-09-14 metax-60，端口 8001）
 
 ---
 
