@@ -31,14 +31,17 @@ TP 计算：10.7B × 2 bytes(bf16) ≈ 21.4GB，单卡 63.6GB，预留 30% → �
 ## Step 0：登录 + 查卡
 
 ```bash
-ssh metax-57   # 或其他空闲机，选定后填入上方"宿主机"
-mx-smi         # 确认有空卡
+ssh metax-60
+mx-smi
 ```
 
-**mx-smi 输出节选**（贴关键行，确认哪几张卡空闲）：
+**mx-smi 输出节选**（2026-09-14）：
 ```
-（上机后粘贴）
+GPU 0: 57252/65536 MiB 占用（Phi-3-mini 服务）
+GPU 1-7: 858/65536 MiB 空闲
 ```
+
+**分配**：GPU 1（TP=1），服务端口 8001
 
 ---
 
@@ -64,10 +67,10 @@ mx-smi
 python -c "import vllm; print(vllm.__version__)"
 ```
 
-**自检输出**（填写实际结果）：
+**自检输出**（2026-09-14 metax-60）：
 ```
-vllm 版本：
-mx-smi 卡数确认：
+容器已启动（container ID: 61bf4177315035a6）
+pip 路径：/opt/conda/bin/pip（非标准 PATH，需全路径调用）
 ```
 
 ---
@@ -79,13 +82,14 @@ ls /models/ | grep -i solar
 ls /models/SOLAR-10.7B-Instruct-v1.0/   # 确认 config.json / *.safetensors / tokenizer
 ```
 
-**结果**：☐ 共享盘已有 / ☐ 需下载
+**结果**：☐ 共享盘已有 / ☑ 需下载（2026-09-14 权重不在共享盘，已在容器内后台下载）
 
-若需下载：
 ```bash
-pip install -q modelscope
-modelscope download --model upstage/SOLAR-10.7B-Instruct-v1.0 \
-  --local_dir /models/SOLAR-10.7B-Instruct-v1.0
+# 容器内安装 modelscope 并后台下载（已执行）
+/opt/conda/bin/pip install -q modelscope
+nohup /opt/conda/bin/modelscope download --model upstage/SOLAR-10.7B-Instruct-v1.0 \
+  --local_dir /models/SOLAR-10.7B-Instruct-v1.0 \
+  > /models/release_run_logs/solar-download.log 2>&1 &
 ```
 
 ---
@@ -94,11 +98,11 @@ modelscope download --model upstage/SOLAR-10.7B-Instruct-v1.0 \
 
 ### 实际使用的完整环境变量（每次迭代更新此块）
 
-**第1次尝试**（黑名单：SOP 默认值）：
+**第1次尝试**（黑名单：SOP 默认值，GPU 1，端口 8001）：
 ```bash
 export GEMS_VENDOR=metax
 export VLLM_PLUGINS=fl
-export MACA_VISIBLE_DEVICES=0
+export MACA_VISIBLE_DEVICES=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
@@ -115,7 +119,7 @@ vllm serve /models/SOLAR-10.7B-Instruct-v1.0 \
   --tensor-parallel-size 1 \
   --max-model-len 32768 \
   --gpu-memory-utilization 0.9 \
-  --port 8000 \
+  --port 8001 \
   --enforce-eager \
   --no-enable-chunked-prefill \
   --trust-remote-code \
@@ -145,25 +149,29 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 ## Step 4：评测
 
+使用已有的 `Phi-3-mini-eval` 评测容器（挂载同一 NFS，已装 evalscope 1.11.1 和 modelscope）：
+
 ```bash
-# 宿主机执行（把评测标准拷进容器）
-docker cp /path/to/release_评测标准 SOLAR-10.7B-Instruct-v1.0_flagos:/workspace/release_评测标准
-
-# 进容器
-docker exec -it SOLAR-10.7B-Instruct-v1.0_flagos /bin/bash
-cd /workspace/release_评测标准
-pip install -q 'evalscope==1.5.1' requests pyyaml
-
 model_name=SOLAR-10.7B-Instruct-v1.0
-python3 fast_gpqa.py --model-name ${model_name} \
-  --api-base http://127.0.0.1:8000/v1 \
+
+docker exec Phi-3-mini-eval bash -c "
+python3 /workspace/eval_scripts/fast_gpqa.py \
+  --model-name ${model_name} \
+  --api-base http://127.0.0.1:8001/v1 \
+  --dataset-dir /models/evalscope-datasets \
   --output /models/release_run_logs/${model_name}/gpqa.json
-python3 accuracy_compare.py \
+"
+
+docker exec Phi-3-mini-eval bash -c "
+python3 /workspace/eval_scripts/accuracy_compare.py \
   --v2 /models/release_run_logs/${model_name}/gpqa.json \
   --nv-baseline ${model_name} \
-  --nv-baseline-file nv_baseline.yaml --json \
+  --nv-baseline-file /workspace/eval_scripts/nv_baseline.yaml --json \
   --output /models/release_run_logs/${model_name}/verdict.json
+"
 ```
+
+> `--api-base` 用 8001 端口（SOLAR 服务）；eval 容器与 vLLM 容器 `--network host`，打 127.0.0.1 直连。
 
 ### 评测迭代记录
 

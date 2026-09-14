@@ -37,14 +37,17 @@ TP 计算：MoE 模型权重文件约 60GB（所有专家总重量）→ 单卡 
 ## Step 0：登录 + 查卡
 
 ```bash
-ssh metax-57
-mx-smi   # 确认至少4张卡空闲
+ssh metax-60
+mx-smi
 ```
 
-**mx-smi 输出节选**：
+**mx-smi 输出节选**（2026-09-14）：
 ```
-（上机后粘贴）
+GPU 0: 57252/65536 MiB 占用（Phi-3-mini 服务）
+GPU 1-7: 858/65536 MiB 空闲
 ```
+
+**分配**：GPU 2,3,4,5（TP=4），服务端口 8002
 
 ---
 
@@ -62,35 +65,40 @@ docker run -d --rm \
   ${IMAGE} \
   sleep infinity
 docker exec -it Qwen3-Coder-30B-A3B-Instruct_flagos /bin/bash
+```
 
+容器内自检：
+```bash
 mx-smi
 python -c "import vllm; print(vllm.__version__)"
 ```
 
-**自检输出**：
+**自检输出**（2026-09-14 metax-60）：
 ```
-vllm 版本：
+容器已启动（container ID: f65c534b9ca5）
+pip 路径：/opt/conda/bin/pip（非标准 PATH，需全路径调用）
 ```
 
 ---
 
 ## Step 2：确认模型
 
-权重来源：`Qwen/Qwen3-Coder-30B-A3B-Instruct`（ModelScope）
-
 ```bash
 ls /models/ | grep -i qwen3-coder
 ls /models/Qwen3-Coder-30B-A3B-Instruct/
 ```
 
-**结果**：☐ 共享盘已有 / ☐ 需下载
+**结果**：☑ 需下载（2026-09-14 权重不在共享盘，已在容器内后台下载）
 
-若需下载：
 ```bash
-pip install -q modelscope
-modelscope download --model Qwen/Qwen3-Coder-30B-A3B-Instruct \
-  --local_dir /models/Qwen3-Coder-30B-A3B-Instruct
+# 容器内安装 modelscope 并后台下载（已执行）
+/opt/conda/bin/pip install -q modelscope
+nohup /opt/conda/bin/modelscope download --model Qwen/Qwen3-Coder-30B-A3B-Instruct \
+  --local_dir /models/Qwen3-Coder-30B-A3B-Instruct \
+  > /models/release_run_logs/qwen3coder-download.log 2>&1 &
 ```
+
+> 16 个 shard 文件，约 60GB，下载时间较长。进度见 `/models/release_run_logs/qwen3coder-download.log`。
 
 ---
 
@@ -108,11 +116,11 @@ Qwen3-Coder 是 MoE + MLA 架构，已知问题最多，分三阶段处理：
 
 ### 环境变量（每次迭代更新）
 
-**第1次尝试**（SOP 默认黑名单 + MLA 相关设置）：
+**第1次尝试**（SOP 默认黑名单 + MLA 相关设置，GPU 2-5，端口 8002）：
 ```bash
 export GEMS_VENDOR=metax
 export VLLM_PLUGINS=fl
-export MACA_VISIBLE_DEVICES=0,1,2,3
+export MACA_VISIBLE_DEVICES=2,3,4,5
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice
 export VLLM_FL_USE_FLAGGEMS_ATTN=0   # MLA prefill 走 MetaX 原生 FA，避免 fa_version 问题
@@ -129,7 +137,7 @@ vllm serve /models/Qwen3-Coder-30B-A3B-Instruct \
   --tensor-parallel-size 4 \
   --max-model-len 32768 \
   --gpu-memory-utilization 0.9 \
-  --port 8000 \
+  --port 8002 \
   --enforce-eager \
   --no-enable-chunked-prefill \
   --trust-remote-code \
@@ -186,29 +194,30 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 ## Step 4：评测
 
+使用已有的 `Phi-3-mini-eval` 评测容器（挂载同一 NFS，已装 evalscope 1.11.1 和 modelscope）：
+
 ```bash
-# 宿主机
-docker cp /path/to/release_评测标准 Qwen3-Coder-30B-A3B-Instruct_flagos:/workspace/release_评测标准
-
-# 容器内
-docker exec -it Qwen3-Coder-30B-A3B-Instruct_flagos /bin/bash
-cd /workspace/release_评测标准
-pip install -q 'evalscope==1.5.1' requests pyyaml
-
 model_name=Qwen3-Coder-30B-A3B-Instruct
-python3 fast_gpqa.py --model-name ${model_name} \
-  --api-base http://127.0.0.1:8000/v1 \
+
+docker exec Phi-3-mini-eval bash -c "
+python3 /workspace/eval_scripts/fast_gpqa.py \
+  --model-name ${model_name} \
+  --api-base http://127.0.0.1:8002/v1 \
+  --dataset-dir /models/evalscope-datasets \
   --output /models/release_run_logs/${model_name}/gpqa.json
-python3 accuracy_compare.py \
+"
+
+docker exec Phi-3-mini-eval bash -c "
+python3 /workspace/eval_scripts/accuracy_compare.py \
   --v2 /models/release_run_logs/${model_name}/gpqa.json \
   --nv-baseline ${model_name} \
-  --nv-baseline-file nv_baseline.yaml --json \
+  --nv-baseline-file /workspace/eval_scripts/nv_baseline.yaml --json \
   --output /models/release_run_logs/${model_name}/verdict.json
+"
 ```
 
-> ⚠ Qwen3 Coder 是 thinking 模型（`enable_thinking` 默认开启），单题输出可能数千 token，
-> 50 题 GPQA 可能跑数小时，不要中断。
-> 若 `truncation_detected: true` → 加大 `--max-model-len` 后重跑。
+> 注意 `--api-base` 用 8002 端口（区别于 Phi-3-mini 的 8000 和 SOLAR 的 8001）。
+> Qwen3-Coder 是 thinking 模型，50 题 GPQA 可能跑数小时，不要中断。
 
 ### 评测迭代记录
 
