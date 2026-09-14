@@ -22,12 +22,13 @@
 
 ```bash
 IMAGE=harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907
-docker run -itd --name <模型名>_flagos \
+model_name=<NV表中的key，如 qwq-32b>   # 容器名用小写，能分辨模型即可
+docker run -itd --name flagrelease-fix-${model_name} \
   --device=/dev/iluvatar \
   --ipc=host --network=host --shm-size 64g \
   -v /public-flash/models:/models \
   ${IMAGE} bash
-docker exec -it <模型名>_flagos bash
+docker exec -it flagrelease-fix-${model_name} bash
 # 容器内自检
 ixsmi
 python -c "import vllm; print(vllm.__version__)"   # 应为 0.24.0
@@ -42,14 +43,27 @@ python -c "import vllm; print(vllm.__version__)"   # 应为 0.24.0
 
 ## 2. 下模型
 
-> ⚠ **约定**：本项目所有模型均以 **ModelScope 为唯一来源**。流程是先把权重拉到容器内 `/models/<模型名>`，再由 `vllm serve` 从本地路径加载；不直接用远程 URL 起服务。若某模型在 ModelScope 上搜不到，**立即停下并报告给发起人**，不自行换源替代。
+> ⚠ **约定**：本项目所有模型均以 **ModelScope 为唯一来源**。所有权重统一下载到共享盘 `/public-flash/models/flagrelease/fixes_models/<模型名>`（容器内路径 `/models/flagrelease/fixes_models/<模型名>`），再由 `vllm serve` 从本地路径加载；不直接用远程 URL 起服务。若某模型在 ModelScope 上搜不到，**立即停下并报告给发起人**，不自行换源替代。
+
+**下载统一在 `eval-scope` 容器里完成**（该容器已预装 modelscope，挂载共享盘到 `/models`）：
 
 ```bash
-pip install -q modelscope
+# 宿主机：确认 eval-scope 容器是否在运行
+docker ps --filter name=eval-scope --format '{{.Names}}'
+# 若无输出，创建容器：
+docker run -d --name eval-scope \
+  --network host \
+  -v /public-flash/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope \
+  sleep infinity
+
+# 进容器下载权重
+docker exec -it eval-scope /bin/bash
+mkdir -p /models/flagrelease/fixes_models
 modelscope download --model <ModelScope仓库/模型ID，如 Qwen/QwQ-32B> \
-  --local_dir /models/<模型名>
+  --local_dir /models/flagrelease/fixes_models/<模型名>
 # 若命令报 404 / model not found → 停止，把模型名和报错截图报给发起人，不要换其他来源自行处理
-ls /models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
+ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
 ```
 
 ## 3. 起 vLLM 服务
@@ -79,11 +93,10 @@ export VLLM_RPC_TIMEOUT=72000000
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 
 mkdir -p /models/release_run_logs/${model_name}
-vllm serve /models/<权重目录，若与 NV key 同名即用 ${model_name}> \
+vllm serve /models/flagrelease/fixes_models/${model_name} \
   --served-model-name ${model_name} \
   --dtype bfloat16 \
   --tensor-parallel-size 8 \
-  --max-model-len <32768，thinking 模型放大输出预算> \
   --gpu-memory-utilization 0.9 \
   --port 8000 \
   --attention-backend TRITON_MLA \
@@ -109,19 +122,21 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 ## 4. 评测判定
 
-评测脚本对**已运行的 vLLM 服务**（`http://127.0.0.1:8000/v1`）跑题。`llm-eval` 容器**不常驻**，两种落地方式，按现场选：
-
-- **方式 A（首选，省事）**：直接在**起服务的同一个容器**里跑评测 —— 它已有 python，`--network host` 下 `127.0.0.1:8000` 直连。把 `release_评测标准` 放到容器 `/workspace/release_评测标准`（宿主机 `docker cp` 或挂载进去）。
-- **方式 B**：确需隔离时再单独拉一个评测容器（能装 evalscope 即可），同样 `--network host`。
+评测脚本对**已运行的 vLLM 服务**（`http://127.0.0.1:8000/v1`）跑题。评测统一在 **`eval-scope` 容器**里执行，该容器已预装 evalscope 和 modelscope，并挂载共享盘到 `/models`。
 
 ```bash
-# 宿主机：把评测标准拷进容器 /workspace（若起容器时没挂载）
-docker cp /path/to/release_评测标准 <模型名>_flagos:/workspace/release_评测标准
+# 宿主机：确认 eval-scope 容器是否在运行
+docker ps --filter name=eval-scope --format '{{.Names}}'
+# 若无输出，创建容器：
+docker run -d --name eval-scope \
+  --network host \
+  -v /public-flash/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope \
+  sleep infinity
 
 # 进容器跑评测
-docker exec -it <模型名>_flagos /bin/bash
+docker exec -it eval-scope /bin/bash
 cd /workspace/release_评测标准
-pip install -q 'evalscope==1.5.1' requests pyyaml
 
 model_name=<与起服务时相同的 NV key>
 # 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric

@@ -17,6 +17,45 @@
 
 ---
 
+## 文件清单（含数据集）
+
+| 路径 | 作用 |
+|------|------|
+| `fast_gpqa.py` | 评测主脚本 |
+| `fast_gpqa_config.yaml` | 默认配置 |
+| `accuracy_compare.py` | 对比判定脚本 |
+| `nv_baseline.yaml` | NV 参考精度基线表 |
+| `datasets/gpqa_diamond.tar.gz` | gpqa_diamond 数据集离线包（397K，2026-09-14 从 metax-60 提取） |
+| `README.md` | 本文档 |
+
+---
+
+## 离线数据集使用说明
+
+`datasets/` 目录存放预下载好的评测数据集压缩包，部署到无外网机器时直接 scp，无需再拉取。
+
+### 部署到目标机器
+
+```bash
+# 1. 把压缩包 scp 到目标机器（示例：部署到 metax-60 的 /public-flash/models/evalscope-datasets/）
+scp flagrelease_eval_methods/datasets/gpqa_diamond.tar.gz metax-60:/tmp/
+
+# 2. 在目标机器（或容器内）解压，目标目录即 evalscope 的缓存格式
+ssh metax-60 "cd /public-flash/models/evalscope-datasets && tar xzf /tmp/gpqa_diamond.tar.gz"
+# 解压后得到 /public-flash/models/evalscope-datasets/gpqa_diamond/
+
+# 3. 容器内用 --dataset-dir 指向挂载路径，跳过网络下载
+docker exec <eval-container> python3 /workspace/fast_gpqa.py \
+  --model-name <model_name> \
+  --api-base http://127.0.0.1:8000/v1 \
+  --dataset-dir /models/evalscope-datasets \
+  --output /models/release_run_logs/<model_name>/gpqa.json
+```
+
+> `--dataset-dir` 指向包含 `gpqa_diamond/` 子目录的**父目录**，evalscope 会在其中查找数据集缓存，命中后不再联网。
+
+---
+
 ## 环境依赖
 
 ```bash
@@ -25,7 +64,7 @@ pip install requests pyyaml 'evalscope==1.5.1'
 
 - `evalscope` 是评测引擎（跑题+判分在其内部完成），**版本锁定 1.5.1**，其他版本行为可能与验证环境不一致（脚本会告警但继续）。
 - 评测对象：任何 OpenAI 兼容服务（`http://host:port/v1`）。脚本会自动探测模型名（`--model-name` 可省略）、自动探测吞吐选并发、自动识别 thinking 模型（qwen3/qwq/deepseek-r1 等）调整 max_tokens。
-- 数据集默认从 ModelScope 下载（`dataset_hub: modelscope`），首次运行需联网；可用 `--dataset-dir` 指向本地缓存目录离线复用。
+- 数据集默认从 ModelScope 下载（`dataset_hub: modelscope`），首次运行需联网；可用 `--dataset-dir` 指向本地缓存目录离线复用（见上方"离线数据集使用说明"）。
 
 ---
 

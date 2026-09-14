@@ -682,14 +682,9 @@ def parse_result(result: Dict) -> Tuple[Optional[float], Dict]:
         return None, result or {}
 
     for key, val in result.items():
-        # Report 对象 → 转 dict
+        # Report 对象 → 转 dict，再走统一的递归搜索
         if hasattr(val, 'to_dict'):
-            val_dict = val.to_dict()
-            score = val_dict.get('score')
-            if score is not None:
-                pct = score * 100 if score <= 1.0 else score
-                return round(pct, 2), val_dict
-
+            val = val.to_dict()
         if isinstance(val, dict):
             score = _find_score(val)
             if score is not None:
@@ -700,8 +695,14 @@ def parse_result(result: Dict) -> Tuple[Optional[float], Dict]:
 
 
 def _find_score(d: dict, depth: int = 0) -> Optional[float]:
-    """递归查找 score/accuracy 字段。"""
-    if depth > 3:
+    """递归查找 score/accuracy 字段（支持嵌套 dict 和 list）。
+
+    evalscope 1.5.1 将分数放在顶层 dict 的 score/accuracy 字段；
+    evalscope 1.11.1 (schema_version=2) 将分数放在 metrics 列表项里：
+    metrics[0].score = 0.28（0–1 范围）。
+    旧版只递归 dict 值，新版需同时递归 list 内的 dict 项。
+    """
+    if depth > 4:
         return None
     for key in ('score', 'accuracy', 'acc', 'mean_acc'):
         if key in d and isinstance(d[key], (int, float)):
@@ -711,6 +712,45 @@ def _find_score(d: dict, depth: int = 0) -> Optional[float]:
             s = _find_score(val, depth + 1)
             if s is not None:
                 return s
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    s = _find_score(item, depth + 1)
+                    if s is not None:
+                        return s
+    return None
+
+
+def _read_score_from_workdir(work_dir: str, model_id: str, dataset: str) -> Optional[float]:
+    """从 evalscope 输出目录直接读取报告 JSON，作为 parse_result 的兜底。
+
+    evalscope 1.11.1 将报告写到 {work_dir}/reports/{model_id}/{dataset}.json，
+    格式为 schema_version=2，分数在 metrics[0].score（0–1 范围）。
+    任何异常都静默返回 None，不影响主流程。
+    """
+    import glob as _glob
+    candidates = [os.path.join(work_dir, 'reports', model_id, f'{dataset}.json')]
+    for path in candidates:
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            score = _find_score(data)
+            if score is not None:
+                pct = score * 100 if score <= 1.0 else score
+                return round(pct, 2)
+        except Exception:
+            pass
+    # glob 兜底：子目录名可能因版本差异不同
+    for path in _glob.glob(os.path.join(work_dir, 'reports', '**', f'{dataset}.json'), recursive=True):
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            score = _find_score(data)
+            if score is not None:
+                pct = score * 100 if score <= 1.0 else score
+                return round(pct, 2)
+        except Exception:
+            pass
     return None
 
 
@@ -983,6 +1023,11 @@ def run_fast_gpqa(
 
     # Step 8: 解析结果
     score, raw_details = parse_result(result)
+    if score is None:
+        # evalscope 1.11.1 run_task 有时返回空对象；从 work_dir 报告 JSON 兜底
+        score = _read_score_from_workdir(work_dir, model_id, dataset)
+        if score is not None:
+            print(f"[PARSE] run_task 返回值解析失败，从 {work_dir}/reports/ 兜底读取分数: {score}%")
     # 以 evalscope 报告的实际评测数为准（mmlu per-subset 时为 57×limit 而非 limit）
     for _k in ('metrics', 'metric'):
         for _m in (raw_details.get(_k) or []) if isinstance(raw_details, dict) else []:
