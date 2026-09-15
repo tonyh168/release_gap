@@ -52,12 +52,12 @@
 - 逐题对错：正确 17 题（doc_id: 6 8 9 11 13 15 16 18 19 27 29 30 31 36 38 45 49）
 - fix 日志：`workspace/metax/fixes/Phi-3.5-mini-instruct.md`
 
-### 🔄 Phi-4-mini-instruct（精度不达标，定位中）
-- v2（plugin-FL 默认黑名单）：GPQA 26% vs NV 38%，rel_drop 31.58% → ❌ 不达标
-- 根本原因：Phi-4 是 GQA（24Q/8KV）+ partial_rotary（75%），plugin-FL 下 rms_norm 和 silu_and_mul 走 FlagGems，GQA 的张量 shape 触发精度问题（Phi-3.5 MHA 不受影响）
-- 裸 vLLM v1 跑了 40%（超 NV 38%），确认是 plugin-FL 引入退化
-- 下一步：v3 扩展黑名单加 rms_norm,silu_and_mul，重跑评测
-- TP=1（GPU 1），port=8002
+### ✅ Phi-4-mini-instruct
+- GPQA 44%，NV 基线 38%，metax 超 NV 6 题，达标
+- TP=1（GPU 1），port=8002，扩展黑名单（默认 + rms_norm,silu_and_mul）
+- 根本原因：Phi-4 是 GQA（24Q/8KV），plugin-FL 下 rms_norm/silu_and_mul 走 FlagGems，GQA 张量 shape 触发精度问题；扩展黑名单后回退 MACA 原生实现，精度恢复
+- 逐题对错：正确 22 题（doc_id: 2 4 5 6 9 10 12 13 17 18 19 20 26 29 30 31 35 40 44 47 48 49）
+- 注意：doc_id 2 evalscope 挂起，用 eval_missing_phi4_v3.py 补评
 - fix 日志：`workspace/metax/fixes/Phi-4-mini-instruct.md`
 
 ---
