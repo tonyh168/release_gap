@@ -72,7 +72,7 @@ ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safet
 > model_name=<NV表中的key>   # 如 Light-R1-7B-DS / Magistral-Small-2506 / Mistral-Small-24B-Instruct-2501 / sarvam-m / SOLAR-10.7B-Instruct-v1.0 / Phi-3-medium-128k-instruct
 > ```
 
-> **不必纠结 V1/V3 版本口径**：修复目标就是把服务跑起来、跑对。直接进容器用 **plugin-FL + vLLM**（`GEMS_VENDOR=hygon` + `VLLM_PLUGINS=fl`）起服务、评测过关即可，无需按 V1/V2/V3 分层复现。文末的版本口径表仅作术语对照。
+> **一律用 plugin-FL 起服务**：不论原始失败报告写的是 V1/V2/V3 哪个阶段失败，本轮修复只做一件事——用 **plugin-FL + vLLM**（`GEMS_VENDOR=hygon` + `VLLM_PLUGINS=fl`）起服务、评测过关。不需要先跑裸 vLLM 基线，不需要复现原始的 V1/V2/V3 分层，也不需要与原始报告的分数逐层对比。失败报告里的版本口径只是历史背景，忽略即可。
 
 **先确认 `import vllm` 通过（第 1 步），再起服务。** FlagOS 后端由环境变量启用（`GEMS_VENDOR=hygon` + `VLLM_PLUGINS=fl`）。以 XingChen4-0907 实测为参考，按目标模型改权重/名称/TP：
 
@@ -151,7 +151,7 @@ python3 accuracy_compare.py \
 ```
 
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
-- **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 同机起裸 vLLM 做 V1 基线两轮对比。
+- **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 上报给发起人，不自行构造基线。
 - 评测输出与 serve 日志同落 `/models/release_run_logs/${model_name}/`，一个模型一个目录。
 - **精度不达标**：先看是否全关算子仍退化——若是，属 plugin 框架级退化（sarvam-m 结论），上报框架 bug；否则二分法缩白名单定位退化算子。见 KNOWLEDGE 二。
 - 小样本（50 题）绝对差 ≤2 题仍判达标。
@@ -175,13 +175,12 @@ python3 accuracy_compare.py \
 （贴关键日志 / 评测分数）
 
 ## 定位
-（是否缺 .so 编译扩展 / V1V2V3 哪层 / 涉及算子名）
+（plugin-FL 下的报错类型：是否缺 .so 编译扩展 / crash 算子名 / 精度退化算子）
 
 ## 处置
 （换镜像 / 关算子 / 调参 / 上报框架）
 
 ## 结果
-- V1 基线分：
 - 修复后分 / NV 基线：
 - 达标判定（accuracy_compare 退出码）：
 

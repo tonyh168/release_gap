@@ -73,7 +73,7 @@ ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safet
 > model_name=<NV表中的key>   # 如 QwQ-32B / TinyR1-32B-Preview / OpenThinker-7B / MiroThinker-v1.5-30B / Phi-3-medium-128k-instruct / SOLAR-10.7B-Instruct-v1.0
 > ```
 
-> **不必纠结 V1/V3 版本口径**：修复目标就是把服务跑起来、跑对。直接进容器用 **plugin-FL + vLLM**（`GEMS_VENDOR=iluvatar` + `VLLM_PLUGINS=fl`）起服务、评测过关即可，无需按 V1/V2/V3 分层复现。文末的版本口径表仅作术语对照。
+> **一律用 plugin-FL 起服务**：不论原始失败报告写的是 V1/V2/V3 哪个阶段失败，本轮修复只做一件事——用 **plugin-FL + vLLM**（`GEMS_VENDOR=iluvatar` + `VLLM_PLUGINS=fl`）起服务、评测过关。不需要先跑裸 vLLM 基线，不需要复现原始的 V1/V2/V3 分层，也不需要与原始报告的分数逐层对比。失败报告里的版本口径只是历史背景，忽略即可。
 
 FlagOS 后端由环境变量启用（`GEMS_VENDOR=iluvatar` + `VLLM_PLUGINS=fl`）。以 XingChen4-0907 实测为参考：
 
@@ -152,7 +152,7 @@ python3 accuracy_compare.py \
 ```
 
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
-- **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 同机起裸 vLLM 做 V1 基线两轮对比。
+- **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 上报给发起人，不自行构造基线。
 - 评测输出与 serve 日志同落 `/models/release_run_logs/${model_name}/`，一个模型一个目录。
 - **评测中途中断**（OpenThinker-7B 跑到 mmlu 145/1140 停）→ 先 `--limit 20` 小样本验稳定，查 serve 日志有无 OOM/CUDA error，再跑全量。见 KNOWLEDGE 五。
 - thinking 模型（QwQ 等）50 题可能 6h+，勿中断。
@@ -178,13 +178,12 @@ python3 accuracy_compare.py \
 （贴关键日志 / 评测分数 / 中断位置）
 
 ## 定位
-（缺实现的算子名 / V1V2V3 哪层 / 是否 OOM）
+（plugin-FL 下的报错类型：crash 算子名 / 精度退化算子 / 是否 OOM）
 
 ## 处置
 （关算子 / 调 TP / 调参 / 上报）
 
 ## 结果
-- V1 基线分：
 - 修复后分 / NV 基线：
 - 达标判定（accuracy_compare 退出码）：
 

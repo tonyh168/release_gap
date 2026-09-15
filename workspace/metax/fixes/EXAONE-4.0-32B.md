@@ -24,12 +24,12 @@ TP 计算：32B bf16 实际活跃参数更少，但权重文件仍约 64GB → T
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `metax-___` |
+| 宿主机 | `metax-60` |
 | 容器名 | `EXAONE-4.0-32B_flagos` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
 | 模型路径 | `/models/EXAONE-4.0-32B` |
-| 卡号 | `MACA_VISIBLE_DEVICES=0,1,2,3`（TP=4）|
-| 实际 vLLM 版本 | |
+| TP / 端口 | TP=4，port=8000（默认） |
+| 实际 vLLM 版本 | 0.24.0 (v0.1.dev17936+gee0da84ab) |
 
 ---
 
@@ -132,15 +132,39 @@ vllm serve /models/EXAONE-4.0-32B \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
 
-**崩溃日志关键行**（贴 traceback 最后几行 + 算子名）：
+**崩溃日志关键行**：
 ```
-（崩溃时粘贴，用于定位黑名单补充项）
+无崩溃，第1次（默认黑名单）直接启动成功。
+INFO:     Application startup complete.
 ```
 
-**第N次尝试**（补充黑名单后）：
+### 实际启动命令（v2 达标迭代，复现用）
+
+容器内实际执行（来源：serve_v2.log `api_utils.py:273` non-default args）：
+
 ```bash
-# 在上面基础上修改 VLLM_FL_FLAGOS_BLACKLIST：
-export VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice,<补充算子>
+export GEMS_VENDOR=metax
+export VLLM_PLUGINS=fl
+export MACA_VISIBLE_DEVICES=0,1,2,3
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice
+export VLLM_FL_USE_FLAGGEMS_ATTN=0
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
+
+model_name=EXAONE-4.0-32B
+mkdir -p /models/release_run_logs/${model_name}
+vllm serve /models/EXAONE-4.0-32B \
+  --served-model-name ${model_name} \
+  --dtype bfloat16 \
+  --tensor-parallel-size 4 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.9 \
+  --port 8000 \
+  --enforce-eager \
+  --no-enable-chunked-prefill \
+  --trust-remote-code \
+  2>&1 | tee /models/release_run_logs/${model_name}/serve_v2.log
 ```
 
 ### 迭代记录
@@ -200,29 +224,69 @@ python3 accuracy_compare.py \
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------------------------|------|
-| 第1次 | | | | |
-| 第2次 | | | | |
+| v1（裸 vLLM） | N/A | — | — | serve.log，未另跑评测 |
+| v2（plugin-FL 默认黑名单） | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | **58%** (29/50) | **0（达标）** | 2026-09-15T03:05:29 |
 
-**verdict.json 原文**（最终达标）：
+**评测参数**（v2，`gpqa_v2.json`）：
+- mode=standard，temperature=0.0，max_tokens=24576，max_model_len=32768，batch_size=8
+- 50 题，无截断（truncation_detected=false），无复读（runaway_count=0）
+- 耗时：探测 61s + 评测 2262s = 约 39 分钟
+
+**verdict_v2.json 原文**（最终达标）：
 ```json
-（粘贴）
+{
+  "baseline_mode": "nv_reference",
+  "model": "EXAONE-4.0-32B",
+  "metric": "gpqa_diamond",
+  "nv": { "score": 62.0, "source": "NV 实测" },
+  "current": { "score": 58.0, "mode": "standard" },
+  "tolerance": 0.05,
+  "timestamp": "2026-09-15T03:12:12.418559",
+  "rel_drop": 0.0645,
+  "rel_drop_pct": 6.45,
+  "abs_diff": -4.0,
+  "aligned": true,
+  "noise_zone": true,
+  "noise_detail": "绝对差异 4.00% = 2.00 题 (每题 2.00%, 共 50 题), ≤ 2 题噪声阈值，属小样本评测方差",
+  "diff_questions": 2.0,
+  "noise_adjusted": true,
+  "message": "精度达标(小样本噪声容忍): 当前=58.00%, NV=62.00%, 相对退化=6.45% 虽超容差 5.0%，但绝对差异 2.00 题 ≤ 2 题噪声阈值，判定达标"
+}
 ```
+
+### 逐题对错（v2，doc_id 来自 evalscope predictions）
+
+按 `doc_id` 升序，共 50 题：
+
+| 状态 | 题数 | doc_id 列表 |
+|------|------|------------|
+| ✓ 正确 | 29 | 0 1 2 4 5 6 7 9 13 14 15 16 18 19 20 25 26 27 29 35 37 38 40 41 42 44 46 47 49 |
+| ✗ 错误 | 21 | 3 8 10 11 12 17 21 22 23 24 28 30 31 32 33 34 36 39 43 45 48 |
+
+> 注：EXAONE 部分题目以 `Answer: X`（首字母大写）结尾而非全大写 `ANSWER:`，解析时已用 `re.IGNORECASE`，50 题全部成功解析。
+
+原始 predictions 文件：`outputs/gpqa_diamond/20260915_023303/predictions/EXAONE-4.0-32B/gpqa_diamond_default.jsonl`（eval-scope 容器内）
 
 ---
 
 ## 现象
-（上机后填：崩溃日志关键行 / 算子名）
+
+原报告 V1–V4 全空（服务 V1 就崩）。本次用 plugin-FL 默认黑名单直接起 v2 服务，`Application startup complete` 正常，长 prompt 冒烟通过。v2 GPQA 58%（29/50 题正确）。
 
 ## 定位
-（填：哪个算子触发 crash / 是 graph capture 还是 eager 就崩）
+
+plugin-FL 默认黑名单覆盖了 EXAONE-4.0-32B 的崩溃算子，eager 模式下一次起成功。EXAONE 模型输出以 `Answer: X`（首字母大写，非全大写 `ANSWER:`）结尾——evalscope 内部解析正常，分数以 evalscope report 中的 `metrics[0].score` 为准（fast_gpqa parse bug 导致 JSON 里 score 字段写成 null，已通过 `_score_source` patch 修正）。精度对比 NV 62%，绝对差 2.0 题，恰在噪声阈值边界，判定达标。
 
 ## 处置
-（填：加入黑名单的算子 / TP 调整）
+
+直接用 SOP 默认黑名单 + `VLLM_FL_USE_FLAGGEMS_ATTN=0` + `--enforce-eager`，TP=4（GPU 0,1,2,3），端口 8000（默认），`max_model_len=32768`，`mode=standard`（非 thinking）。v2 评测后用 `_score_source` 字段从 evalscope report 回填 score，再跑 accuracy_compare。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：**58%** (29/50)
+- NV 基线：62%
+- 达标判定（accuracy_compare 退出码）：**0（达标，noise_zone=true，2.0 题差 = 噪声阈值上限）**
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+EXAONE-4.0-32B 在 MetaX 上用默认黑名单 + eager 模式可一次起成功；其模型输出以 `Answer: X`（非全大写）结尾，evalscope 能正常解析，自行后处理需用 `re.IGNORECASE`。
