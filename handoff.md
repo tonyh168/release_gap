@@ -44,19 +44,21 @@
 - 权重：`/public-flash/models/Phi-3-mini-128k-instruct`（已在共享盘）
 - fix 日志模板：`workspace/metax/fixes/Phi-3-mini-128k-instruct.md`
 
-### 📋 Phi-3.5-mini-instruct（尚未上机）
-- 原报告：V2 28%，V3 26%，纯精度退化，无 crash，无 Issue
-- 修复方案：plugin-FL 默认黑名单 + eager；若退化，二分法定位算子
-- 权重来源：`LLM-Research/Phi-3.5-mini-instruct`（ModelScope）
-- TP=1（3.8B ~7.6GB，单卡可装），建议端口 8001
-- fix 日志模板：`workspace/metax/fixes/Phi-3.5-mini-instruct.md`
+### ✅ Phi-3.5-mini-instruct
+- GPQA 34%，NV 基线 26%，metax 超 NV 8 题，达标
+- TP=1（GPU 0），port=8001，plugin-FL 默认黑名单，一次启动成功
+- 注意：MHA 架构，rms_norm/silu_and_mul 在 FlagGems 下无精度问题
+- doc_id 23/34 evalscope 挂起（长回答），用 eval_missing2.py 补评
+- 逐题对错：正确 17 题（doc_id: 6 8 9 11 13 15 16 18 19 27 29 30 31 36 38 45 49）
+- fix 日志：`workspace/metax/fixes/Phi-3.5-mini-instruct.md`
 
-### 📋 Phi-4-mini-instruct（尚未上机）
-- 原报告：V3 GPQA 28% vs NV 38%，rel_drop 26.3% + plugin-FL dispatch/vllm_fl 报错
-- 修复方案：先裸 vLLM V1 基线，再二分法黑名单
-- 权重需下载：`microsoft/Phi-4-mini-instruct`（ModelScope）
-- TP=1（3.8B），建议端口 8001
-- fix 日志模板：`workspace/metax/fixes/Phi-4-mini-instruct.md`（待建）
+### 🔄 Phi-4-mini-instruct（精度不达标，定位中）
+- v2（plugin-FL 默认黑名单）：GPQA 26% vs NV 38%，rel_drop 31.58% → ❌ 不达标
+- 根本原因：Phi-4 是 GQA（24Q/8KV）+ partial_rotary（75%），plugin-FL 下 rms_norm 和 silu_and_mul 走 FlagGems，GQA 的张量 shape 触发精度问题（Phi-3.5 MHA 不受影响）
+- 裸 vLLM v1 跑了 40%（超 NV 38%），确认是 plugin-FL 引入退化
+- 下一步：v3 扩展黑名单加 rms_norm,silu_and_mul，重跑评测
+- TP=1（GPU 1），port=8002
+- fix 日志：`workspace/metax/fixes/Phi-4-mini-instruct.md`
 
 ---
 
