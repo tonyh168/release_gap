@@ -28,9 +28,9 @@ TP 计算：MoE 模型权重文件约 60GB（所有专家总重量）→ 单卡 
 | 宿主机 | `metax-60` |
 | 容器名 | `Qwen3-Coder-30B-A3B-Instruct_flagos` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907` |
-| 模型路径 | `/models/Qwen3-Coder-30B-A3B-Instruct`（2026-09-14 下载中） |
-| 卡号 | `MACA_VISIBLE_DEVICES=2,3,4,5`（TP=4，GPU 2-5 空闲） |
-| 实际 vLLM 版本 | 0.24.0 |
+| 模型路径 | `/models/Qwen3-Coder-30B-A3B-Instruct` |
+| TP / 端口 | TP=4（GPU 2,3,4,5），port=8002 |
+| 实际 vLLM 版本 | 0.24.0 (v0.1.dev17936+gee0da84ab) |
 
 ---
 
@@ -144,6 +144,35 @@ vllm serve /models/Qwen3-Coder-30B-A3B-Instruct \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
 
+### 实际启动命令（v1 达标迭代，复现用）
+
+容器内实际执行（来源：serve.log `api_utils.py:273` non-default args）：
+
+```bash
+export GEMS_VENDOR=metax
+export VLLM_PLUGINS=fl
+export MACA_VISIBLE_DEVICES=2,3,4,5
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice
+export VLLM_FL_USE_FLAGGEMS_ATTN=0
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
+
+model_name=Qwen3-Coder-30B-A3B-Instruct
+mkdir -p /models/release_run_logs/${model_name}
+vllm serve /models/Qwen3-Coder-30B-A3B-Instruct \
+  --served-model-name ${model_name} \
+  --dtype bfloat16 \
+  --tensor-parallel-size 4 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.9 \
+  --port 8002 \
+  --enforce-eager \
+  --no-enable-chunked-prefill \
+  --trust-remote-code \
+  2>&1 | tee /models/release_run_logs/${model_name}/serve.log
+```
+
 **启动日志关键行**（2026-09-14 metax-60）：
 ```
 (APIServer pid=120) INFO:     Application startup complete.
@@ -230,29 +259,58 @@ python3 /workspace/eval_scripts/accuracy_compare.py \
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------------------------|------|
-| 第1次 | | | | |
-| 第2次 | | | | |
+| 第1次 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | **50%** (25/50) | **0（达标）** | 2026-09-14T09:12:38，thinking 模式 |
+
+**评测参数**（`gpqa.json`）：
+- mode=thinking，temperature=0.6，max_tokens=20000，max_model_len=32768，batch_size=8
+- 50 题，无截断（truncation_detected=false），无复读（runaway_count=0）
+- 耗时：探测 52s + 评测 1556s = 约 27 分钟
+- 评测容器：`Phi-3-mini-eval`（非 eval-scope，端口 8002）
+- evalscope 输出目录：`outputs/gpqa_diamond/20260914_085121`（Phi-3-mini-eval 容器本地，非共享盘）
 
 **verdict.json 原文**（最终达标）：
 ```json
-（粘贴）
+{
+  "baseline_mode": "nv_reference",
+  "model": "Qwen3-Coder-30B-A3B-Instruct",
+  "metric": "gpqa_diamond",
+  "nv": { "score": 54.0, "source": "NV 实测" },
+  "current": { "score": 50.0, "mode": "thinking" },
+  "tolerance": 0.05,
+  "timestamp": "2026-09-14T09:20:08.549974",
+  "rel_drop": 0.0741,
+  "rel_drop_pct": 7.41,
+  "abs_diff": -4.0,
+  "aligned": true,
+  "noise_zone": true,
+  "noise_detail": "绝对差异 4.00% = 2.00 题 (每题 2.00%, 共 50 题), ≤ 2 题噪声阈值，属小样本评测方差",
+  "diff_questions": 2.0,
+  "noise_adjusted": true,
+  "message": "精度达标(小样本噪声容忍): 当前=50.00%, NV=54.00%, 相对退化=7.41% 虽超容差 5.0%，但绝对差异 2.00 题 ≤ 2 题噪声阈值，判定达标"
+}
 ```
+
+> 注：逐题对错数据无法从 eval-scope 容器提取（eval 运行在 `Phi-3-mini-eval` 容器的本地文件系统，`outputs/gpqa_diamond/20260914_085121` 未落共享盘）。若需复现逐题结果，须在同一容器内重跑或提前将 evalscope outputs 目录挂载到 `/models`。
 
 ---
 
 ## 现象
-（上机后填）
+
+原报告四项全失败（crash + 精度 + 性能 + plugin-FL 报错）。本次用 plugin-FL 默认黑名单 + eager 模式直接起服务（TP=4，GPU 2-5，端口 8002），日志无崩溃，`Application startup complete` 正常。短 prompt（1+1）和长 prompt（链表实现）冒烟均通过，无 `forward_mha/forward_mqa` 或 `fa_version` 报错。v1 GPQA 50%（25/50 题正确，thinking 模式）。
 
 ## 定位
-（crash 算子名 / plugin-FL 报错类型 / 精度退化算子）
+
+plugin-FL 默认黑名单覆盖了 Qwen3-Coder MoE + MLA 架构的崩溃算子，vLLM 0.24.0 镜像已内置 MLA 接口修复（`FlashMLAImpl forward_mha/forward_mqa` 问题不复现）。精度对比 NV 基线 54%，绝对差 2.0 题，恰在噪声阈值边界，判定达标。
 
 ## 处置
-（各阶段做了什么调整）
+
+直接用 SOP 默认黑名单 + `VLLM_FL_USE_FLAGGEMS_ATTN=0` + `--enforce-eager`，TP=4（GPU 2,3,4,5），端口 8002，`max_model_len=32768`，`mode=thinking`（thinking 类模型保持默认）。评测在已有的 `Phi-3-mini-eval` 容器执行（端口 8002）。无需二分排查。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+- 修复后 GPQA 正确率：**50%** (25/50，thinking 模式)
+- NV 基线：54%
+- 达标判定（accuracy_compare 退出码）：**0（达标，noise_zone=true，2.0 题差 = 噪声阈值上限）**
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+Qwen3-Coder-30B-A3B-Instruct 在 MetaX vLLM 0.24.0 上用默认黑名单 + eager 模式可一次起成功；MLA `FlashMLAImpl` 接口变更问题已在该镜像内修复，无需额外参数。逐题对错数据无法恢复（eval 容器本地 FS 未挂共享盘），今后评测时须将 evalscope outputs 目录挂载到 `/models`。
