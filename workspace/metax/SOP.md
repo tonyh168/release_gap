@@ -72,7 +72,7 @@ ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safet
 > ```
 > 若权重落盘目录名与 NV key 不同，`vllm serve <权重路径>` 用真实路径，但 `--served-model-name ${model_name}` 仍用 NV key。
 
-> **不必纠结 V1/V3 版本口径**：修复目标就是把服务跑起来、跑对。直接进容器用 **plugin-FL + vLLM**（`GEMS_VENDOR=metax` + `VLLM_PLUGINS=fl`）起服务、评测过关即可，无需按 V1/V2/V3 分层复现。文末的版本口径表仅作术语对照。
+> **一律用 plugin-FL 起服务**：不论原始失败报告写的是 V1/V2/V3 哪个阶段失败，本轮修复只做一件事——用 **plugin-FL + vLLM**（`GEMS_VENDOR=metax` + `VLLM_PLUGINS=fl`）起服务、评测过关。不需要先跑裸 vLLM 基线，不需要复现原始的 V1/V2/V3 分层，也不需要与原始报告的分数逐层对比。失败报告里的版本口径只是历史背景，忽略即可。
 
 FlagOS 后端由环境变量启用，**不是** `VLLM_USE_FLAGGEMS`。以 xingchen4-0907 实测为参考（`GEMS_VENDOR=metax` + `VLLM_PLUGINS=fl`），按目标模型改权重路径/名称/TP：
 
@@ -155,7 +155,7 @@ python3 accuracy_compare.py \
 
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中基线，无需额外映射。
 - **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 该模型没 gpqa 基线，改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。基线覆盖 math_500/mmlu 比 gpqa 广。见 `_shared/EVAL.md`。
-- 若任何数据集都无 NV 基线 → 同机先起裸 vLLM 跑一轮做 V1 基线，再与 plugin-FL 轮 `--v1/--v2` 两两对比。
+- 若任何数据集都无 NV 基线 → 上报给发起人，不自行构造基线。
 - 评测输出与 serve 日志同落 `/models/release_run_logs/${model_name}/`，一个模型一个目录。
 - thinking 模型（EXAONE 类）单题输出长，50 题可能数小时，勿中断。
 - `truncation_detected:true` → 加大 `--max-model-len` 重跑。
@@ -179,13 +179,12 @@ python3 accuracy_compare.py \
 （贴关键日志 / 评测分数）
 
 ## 定位
-（V1/V2/V3 哪一层引入问题，涉及算子名）
+（plugin-FL 下的报错类型：crash 算子名 / 精度退化算子 / OOM）
 
 ## 处置
 （改了什么：关算子 / 换镜像 / 调参）
 
 ## 结果
-- V1 基线分：
 - 修复后分 / NV 基线：
 - 达标判定（accuracy_compare 退出码）：
 
