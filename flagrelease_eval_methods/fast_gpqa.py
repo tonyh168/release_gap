@@ -367,6 +367,15 @@ def detect_runaway(text: str, finish_reason: str = "") -> Tuple[bool, Dict]:
         evidence = {"diversity": float, "compress_ratio": float, "text_len": int,
                     "finish_reason": str, "reason": str}
     """
+    # thinking 模型的 message.content 可能是多段结构（list），需拼接为纯文本
+    if isinstance(text, list):
+        parts = []
+        for p in text:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                parts.append(p.get("text") or p.get("content") or "")
+        text = "".join(parts)
     text = (text or "").strip()
     evidence = {
         "diversity": 1.0,

@@ -61,7 +61,10 @@ docker exec -it eval-scope /bin/bash
 mkdir -p /models/flagrelease/fixes_models
 modelscope download --model <ModelScope仓库/模型ID，如 Qwen/Qwen2.5-7B-Instruct> \
   --local_dir /models/flagrelease/fixes_models/<模型名>
-# 若命令报 404 / model not found → 停止，把模型名和报错截图报给发起人，不要换其他来源自行处理
+# 若命令报 404 / model not found → 改用 HuggingFace 备用下载（eval-scope 容器内已预装 hf CLI）：
+# hf download <HuggingFace仓库/模型ID> \
+#   --local-dir /models/flagrelease/fixes_models/<模型名>
+# 若 HuggingFace 也找不到 → 停止，把模型名和报错截图报给发起人
 ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
 ```
 

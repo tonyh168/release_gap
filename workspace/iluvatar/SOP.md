@@ -14,7 +14,7 @@
   ixsmi   # 天数查卡：看每卡显存/进程；这机器一般独占，但有占用先问清楚再用，别抢卡
   ```
 - 镜像：`harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907`（corex4.5.0 / flagtree0.6.0 / triton3.6.0 / vllm_fl 0.24.0）。
-- 共享存储：宿主机模型盘挂到容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`）。
+- 共享存储（NFS）：iluvatar 所有机器的 NFS 挂载点均为宿主机 `/mnt/share/`，模型目录为 `/mnt/share/models/`。起容器时统一用 `-v /mnt/share/models:/models`，容器内访问路径 `/models`（如 `/models/flagrelease/fixes_models/QwQ-32B`）。
 
 ## 1. 起容器
 
@@ -24,9 +24,13 @@
 IMAGE=harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907
 model_name=<NV表中的key，如 qwq-32b>   # 容器名用小写，能分辨模型即可
 docker run -itd --name flagrelease-fix-${model_name} \
-  --device=/dev/iluvatar \
+  --device=/dev/iluvatar0  --device=/dev/iluvatar1  --device=/dev/iluvatar2  --device=/dev/iluvatar3 \
+  --device=/dev/iluvatar4  --device=/dev/iluvatar5  --device=/dev/iluvatar6  --device=/dev/iluvatar7 \
+  --device=/dev/iluvatar8  --device=/dev/iluvatar9  --device=/dev/iluvatar10 --device=/dev/iluvatar11 \
+  --device=/dev/iluvatar12 --device=/dev/iluvatar13 --device=/dev/iluvatar14 --device=/dev/iluvatar15 \
+  --device=/dev/itrctl --device=/dev/itrlink --device=/dev/itr_peerm_dev0 \
   --ipc=host --network=host --shm-size 64g \
-  -v /public-flash/models:/models \
+  -v /mnt/share/models:/models \
   ${IMAGE} bash
 docker exec -it flagrelease-fix-${model_name} bash
 # 容器内自检
@@ -43,7 +47,7 @@ python -c "import vllm; print(vllm.__version__)"   # 应为 0.24.0
 
 ## 2. 下模型
 
-> ⚠ **约定**：本项目所有模型均以 **ModelScope 为唯一来源**。所有权重统一下载到共享盘 `/public-flash/models/flagrelease/fixes_models/<模型名>`（容器内路径 `/models/flagrelease/fixes_models/<模型名>`），再由 `vllm serve` 从本地路径加载；不直接用远程 URL 起服务。若某模型在 ModelScope 上搜不到，**立即停下并报告给发起人**，不自行换源替代。
+> ⚠ **约定**：本项目所有模型均以 **ModelScope 为唯一来源**。所有权重统一下载到共享盘 `/mnt/share/models/flagrelease/fixes_models/<模型名>`（宿主机 NFS 路径；容器内挂载路径 `/models/flagrelease/fixes_models/<模型名>`），再由 `vllm serve` 从本地路径加载；不直接用远程 URL 起服务。**来源优先级：ModelScope 优先，若 ModelScope 返回 404 / model not found，再从 HuggingFace 下载（见下文备用下载命令）。两个来源都没有时立即停下并报告给发起人。**
 
 **下载统一在 `eval-scope` 容器里完成**（该容器已预装 modelscope，挂载共享盘到 `/models`）：
 
@@ -53,7 +57,7 @@ docker ps --filter name=eval-scope --format '{{.Names}}'
 # 若无输出，创建容器：
 docker run -d --name eval-scope \
   --network host \
-  -v /public-flash/models:/models \
+  -v /mnt/share/models:/models \
   harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope \
   sleep infinity
 
@@ -62,7 +66,10 @@ docker exec -it eval-scope /bin/bash
 mkdir -p /models/flagrelease/fixes_models
 modelscope download --model <ModelScope仓库/模型ID，如 Qwen/QwQ-32B> \
   --local_dir /models/flagrelease/fixes_models/<模型名>
-# 若命令报 404 / model not found → 停止，把模型名和报错截图报给发起人，不要换其他来源自行处理
+# 若命令报 404 / model not found → 改用 HuggingFace 备用下载（eval-scope 容器内已预装 hf CLI）：
+# hf download <HuggingFace仓库/模型ID，如 qihoo360/TinyR1-32B-Preview> \
+#   --local-dir /models/flagrelease/fixes_models/<模型名>
+# 若 HuggingFace 也找不到 → 停止，把模型名和报错截图报给发起人
 ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
 ```
 
@@ -109,7 +116,11 @@ vllm serve /models/flagrelease/fixes_models/${model_name} \
 - 日志 `Application startup complete` 即就绪。
 - **`VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable` 必设**，否则服务 hang（天数实测强坑）。
 - **服务启动失败**（QwQ/TinyR1/Phi-3-medium/MiroThinker 都栽在这）→ 抓栈定位缺实现的算子，加进 `VLLM_FL_FLAGOS_BLACKLIST` 挡回原生，或先关 plugin 跑通再逐步开。见 [[KNOWLEDGE]] 一。
-- `--attention-backend TRITON_MLA` 是 MLA 类模型实测值；`--chat-template` 仅当模型目录带 `chat_template.jinja` 时加。
+- **`--attention-backend` 选择规则**：
+  - MLA 架构（DeepSeek 系、QwQ、TinyR1 等，config.json 有 `q_lora_rank`/`kv_lora_rank` 字段）→ `TRITON_MLA`
+  - 普通 MHA/GQA transformer（Qwen、Gemma、Mistral、OpenThinker 等）→ `TRITON_ATTN`
+  - SSM/Hybrid 模型（LFM2.5 等）→ `TRITON_ATTN`（不要指定 TRITON_MLA，否则报 MLACommonImpl 参数错）
+- `--chat-template` 仅当模型目录带 `chat_template.jinja` 时加。
 - 大模型崩溃优先加大 TP 降单卡压力。
 
 服务存活自检：
@@ -130,7 +141,7 @@ docker ps --filter name=eval-scope --format '{{.Names}}'
 # 若无输出，创建容器：
 docker run -d --name eval-scope \
   --network host \
-  -v /public-flash/models:/models \
+  -v /mnt/share/models:/models \
   harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope \
   sleep infinity
 
