@@ -98,7 +98,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200     # 首次推理有 Triton 编译�
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 
 mkdir -p /models/release_run_logs/${model_name}
-vllm serve /models/flagrelease/fixes_models/${model_name} \
+/opt/conda/bin/vllm serve /models/flagrelease/fixes_models/${model_name} \
   --served-model-name ${model_name} \
   --dtype bfloat16 \
   --tensor-parallel-size 8 \
@@ -109,6 +109,8 @@ vllm serve /models/flagrelease/fixes_models/${model_name} \
   --trust-remote-code \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
+
+> ⚠ **vllm 路径**：容器内 `vllm` 是 Python 包目录（`/opt/conda/lib/python3.x/site-packages/vllm/`），**不是**可执行文件。直接写 `vllm serve` 在交互式 shell 里能靠 PATH 找到 `/opt/conda/bin/vllm`，但通过 `docker exec -d` 或脚本以非交互方式运行时，PATH 中可能不含 `/opt/conda/bin`，导致 `bash: exec: vllm: cannot execute: Is a directory`。**始终使用绝对路径 `/opt/conda/bin/vllm serve ...`**，在任何启动方式下都安全。
 
 - 日志出现 `Application startup complete` 即就绪。先跑 **eager**（`--enforce-eager`）确认能起；graph 模式去掉该 flag，但黑名单须补全 `bmm,bmm_out,linear`，否则 CUDA graph capture 崩。
 - **冒烟 PASS ≠ 评测能跑**：短 prompt 只走 decode，长 prompt 才走 MLA prefill 变长注意力。起来后必须用长 prompt（下方 curl / 直接跑 GPQA）验证，别只测 `1+1`。
