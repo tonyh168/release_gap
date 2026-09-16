@@ -22,48 +22,29 @@
 | Phi-3.5-mini-instruct | ✅ 已通过 | 精度不达标（V2=28%，V3=26%，超 5% 阈值） | gpqa_diamond | 26.0 | **34.0**（↑8pt，反超基线） | metax-60 / `flagrelease-fix-phi-3.5-mini-instruct` / :8001 | 完成，达标（doc_id 23/34 eval_missing2.py 补评） |
 | Phi-4-mini-instruct | ✅ 已通过 | 精度不达标（V3=28% vs NV=38%，plugin-FL GQA 精度退化） | gpqa_diamond | 38.0 | **44.0**（↑6pt，反超基线） | metax-60 / `flagrelease-fix-phi-4-mini-instruct` / :8002 | 完成，达标（v3 扩展黑名单 rms_norm,silu_and_mul，doc_id 2 补评） |
 | Qwen3-Coder-30B-A3B-Instruct | ✅ 已通过 | 服务启动失败 + 精度/性能不达标 + plugin 报错（四项全失败） | gpqa_diamond | 52.0 | **50.0**（噪声容忍达标） | metax-60 / `Qwen3-Coder-30B-A3B-Instruct_flagos` / :8002 | 完成，达标（MoE+MLA，默认黑名单 + VLLM_FL_USE_FLAGGEMS_ATTN=0） |
-| EXAONE-4.0-32B | 🟡 评测进行中 | 服务启动失败（Operator crash） | gpqa_diamond | 62.0 | — | metax-58 / `EXAONE-4.0-32B_flagos` / :8000 | **198 题全量 GPQA 评测进行中**（eval_198.log，gpqa_v_198.json） |
+| EXAONE-4.0-32B | ✅ 已通过 | 服务启动失败（Operator crash） | gpqa_diamond | 62.0 | **63.13%**（↑1.13pt，198题全量，干净达标） | metax-58 / `EXAONE-4.0-32B_flagos` / :8000 | 完成，达标（默认黑名单一次成功，198题全量排除噪声，fast_gpqa score=null 从 evalscope reviews 补计分） |
 | Qwen3-30B-A3B-Thinking-2507 | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 75.0 | **74.0**（相对退化 1.33%，容差内达标） | metax-60 / `flagrelease-fix-qwen3-30b-a3b-thinking-2507` / :8000 | 完成，达标（thinking 模式，fast_gpqa score=null 从 evalscope reviews 手工补计分） |
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
+| SOLAR-10.7B-Instruct-v1.0 | ❌ 修复暂停 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=24.0%❌ v2=26.0%❌ v3=20.0%❌ | metax-60 / 容器已停止 | **暂停**（三轮均不达标，最优 v2=26%；plugin-FL 导致格式退化，模型生成冗长推理不输出 ANSWER 字母） |
+| reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | — | metax-60 / `flagrelease-fix-reka-flash-3` / :8001 | **v1 eval 跑中**（默认黑名单，TP=2，GPU 1,2；reasoning 模型，预计 9+h；服务 29-44 tok/s 正常出题） |
 
 ---
 
 ## 当前进度快照
 
-- **精度已通过**：7 / 8（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
-- **评测进行中**：1 / 8（EXAONE-4.0-32B 198 题，metax-58）
-- **尚未开始**：0 / 8
+- **精度已通过**：8 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
+- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~43/50）
+- **修复暂停**：1 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%，容器已停止）
+- **尚未开始**：0 / 10
 
 ### 🟡 当前运行中的服务
-
-**metax-58**
-
-| 模型 | GPU | 端口 | TP | 数据集 | 题数 |
-|------|:---:|:----:|:--:|:------:|:----:|
-| EXAONE-4.0-32B | 0–3 | 8000 | 4 | gpqa_diamond | 198（全量） |
 
 **metax-60**
 
 | 模型 | GPU | 端口 | TP | 数据集 | 题数 |
 |------|:---:|:----:|:--:|:------:|:----:|
-| Phi-3.5-mini-instruct | 0 | 8001 | 1 | gpqa_diamond | —（已完成） |
-| Phi-4-mini-instruct | 1 | 8002 | 1 | gpqa_diamond | —（已完成） |
-| Qwen3-30B-A3B-Thinking-2507 | 2–5 | 8000 | 4 | gpqa_diamond | —（已完成，74.0%） |
-| Baichuan-M2-32B | 6–7 | 8003 | 2 | gpqa_diamond | —（已完成，74.0%） |
-
-跟踪进度：
-
-```bash
-# metax-60 评测状态
-ssh metax-60 'for m in Qwen3-30B-A3B-Thinking-2507 Baichuan-M2-32B; do
-  echo "== $m =="; tail -3 /public-flash/models/release_run_logs/$m/eval_v1.log 2>/dev/null || echo "(未开始)";
-  cat /public-flash/models/release_run_logs/$m/verdict_v1.json 2>/dev/null || echo "(无 verdict)";
-done'
-
-# metax-58 EXAONE 198题评测状态
-ssh metax-58 'tail -5 /public-flash/models/release_run_logs/EXAONE-4.0-32B/eval_198.log 2>/dev/null'
-```
+| reka-flash-3 | 1,2 | 8001 | 2 | gpqa_diamond | 50（eval 进行中） |
 
 ---
 
@@ -103,16 +84,19 @@ ssh metax-58 'tail -5 /public-flash/models/release_run_logs/EXAONE-4.0-32B/eval_
 - **评测结果**：74.0%（37/50），NV 64.0%（↑10pt 反超），accuracy_compare 退出码 0
 - **注意**：fast_gpqa crash 在 runaway 后处理阶段（`detect_runaway` 收到 list 类型 content），50 题已全部评完，从 evalscope reviews 补计分
 
-- **历史结果**（metax-57，50 题）：58%（29/50），NV 62.0%，noise_zone=true（2.0 题差，噪声阈值），退出码 0
-- **本次重跑**（metax-58）：198 题全量评测，排除小样本噪声，结果待出
-- **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=4（GPU 0–3），port 8000
-
 ### GLM-4-32B-0414（✅ 达标）
 
 - **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=2（GPU 0–1），port 8003，一次起成功无需调整黑名单
 - **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
 - **评测结果**：52%（26/50），NV 55.0%，noise_zone=true（1.5 题差 ≤ 2 题阈值），accuracy_compare 退出码 0
 - **注意**：原报告 V1–V4 全空（服务启动就崩）；本次 plugin-FL 默认黑名单覆盖了 GLM-4 崩溃算子，无需二分排查
+
+### EXAONE-4.0-32B（✅ 达标）
+
+- **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=4（GPU 0–3），port 8000，mode=standard（非 thinking）
+- **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
+- **评测结果**：63.13%（125/198，全量 198 题），NV 62.0%（↑1.13pt 反超），accuracy_compare 退出码 0
+- **注意**：原报告 V1–V4 全空（Operator crash）；默认黑名单一次起成功。fast_gpqa score=null（解析 bug），从 evalscope reviews 的 `sample_score.score.value.accuracy` 补计分。50 题 noise_zone 达标后重跑 198 题全量排除噪声，干净通过。EXAONE 输出以 `Answer: X`（首字母大写，非全大写 `ANSWER:`）结尾，自行后处理需用 `re.IGNORECASE`。机器：metax-58
 
 ---
 

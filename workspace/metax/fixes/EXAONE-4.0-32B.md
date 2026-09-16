@@ -225,14 +225,20 @@ python3 accuracy_compare.py \
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------------------------|------|
 | v1（裸 vLLM） | N/A | — | — | serve.log，未另跑评测 |
-| v2（plugin-FL 默认黑名单） | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | **58%** (29/50) | **0（达标）** | 2026-09-15T03:05:29 |
+| v2（plugin-FL 默认黑名单，50 题） | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | **58%** (29/50) | **0（达标，noise_zone=true）** | 2026-09-15T03:05:29；小样本噪声容忍（2.0 题差 ≤ 阈值） |
+| v_198（plugin-FL 默认黑名单，198 题全量） | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | **63.13%** (125/198) | **0（达标，干净通过）** | 2026-09-16T09:40:08；耗时 125m 7.8s；fast_gpqa score=null，从 evalscope reviews 补计分 |
 
-**评测参数**（v2，`gpqa_v2.json`）：
+**评测参数**（v2，`gpqa_v2.json`，50 题）：
 - mode=standard，temperature=0.0，max_tokens=24576，max_model_len=32768，batch_size=8
 - 50 题，无截断（truncation_detected=false），无复读（runaway_count=0）
 - 耗时：探测 61s + 评测 2262s = 约 39 分钟
 
-**verdict_v2.json 原文**（最终达标）：
+**评测参数**（v_198，`gpqa_v_198.json`，198 题全量，metax-58）：
+- mode=standard，temperature=0.0，max_model_len=32768
+- 198 题全量，耗时 125m 7.8s；fast_gpqa score=null（同一解析 bug），从 `/outputs/gpqa_diamond/20260916_071142/reviews/EXAONE-4.0-32B/gpqa_diamond_default.jsonl` 补回
+- 机器：metax-58 / `EXAONE-4.0-32B_flagos` / port 8000 / GPU 0-3 / TP=4
+
+**verdict_v2.json 原文**（50 题，noise_zone 达标）：
 ```json
 {
   "baseline_mode": "nv_reference",
@@ -251,6 +257,25 @@ python3 accuracy_compare.py \
   "diff_questions": 2.0,
   "noise_adjusted": true,
   "message": "精度达标(小样本噪声容忍): 当前=58.00%, NV=62.00%, 相对退化=6.45% 虽超容差 5.0%，但绝对差异 2.00 题 ≤ 2 题噪声阈值，判定达标"
+}
+```
+
+**verdict_v_198.json 原文**（198 题全量，干净达标）：
+```json
+{
+  "baseline_mode": "nv_reference",
+  "model": "EXAONE-4.0-32B",
+  "metric": "gpqa_diamond",
+  "nv": { "score": 62.0, "source": "NV 实测" },
+  "current": { "score": 63.13, "mode": "standard" },
+  "tolerance": 0.05,
+  "timestamp": "2026-09-16T09:40:08.306760",
+  "rel_drop": -0.0182,
+  "rel_drop_pct": -1.82,
+  "abs_diff": 1.13,
+  "aligned": true,
+  "noise_zone": false,
+  "message": "精度达标: 当前=63.13%, NV=62.00%, 相对退化=-1.82% (容差 5.0%)"
 }
 ```
 
