@@ -26,7 +26,7 @@
 | Qwen3-30B-A3B-Thinking-2507 | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 75.0 | **74.0**（相对退化 1.33%，容差内达标） | metax-60 / `flagrelease-fix-qwen3-30b-a3b-thinking-2507` / :8000 | 完成，达标（thinking 模式，fast_gpqa score=null 从 evalscope reviews 手工补计分） |
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
-| SOLAR-10.7B-Instruct-v1.0 | 🟡 评测进行中 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=**24.0%**（❌不达标） | metax-60 / `flagrelease-fix-solar-10.7b-instruct` / :8000 | **v2 eval_v2.log 跑中**（扩展黑名单 +rms_norm,silu_and_mul，参考 Phi-4-mini 方案） |
+| SOLAR-10.7B-Instruct-v1.0 | ❌ 修复暂停 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=24.0%❌ v2=26.0%❌ v3=20.0%❌ | metax-60 / 容器已停止 | **暂停**（三轮均不达标，最优 v2=26%；plugin-FL 导致格式退化，模型生成冗长推理不输出 ANSWER 字母） |
 | reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | — | metax-60 / `flagrelease-fix-reka-flash-3` / :8001 | **v1 eval 跑中**（默认黑名单，TP=2，GPU 1,2；reasoning 模型，预计 9+h；服务 29-44 tok/s 正常出题） |
 
 ---
@@ -34,40 +34,17 @@
 ## 当前进度快照
 
 - **精度已通过**：7 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
-- **评测进行中**：1 / 10（EXAONE-4.0-32B 198 题，metax-58）
-- **评测进行中**：2 / 10（EXAONE-4.0-32B 198题，metax-58；SOLAR-10.7B-Instruct-v1.0 eval_v1.log 跑中，metax-60）
-- **修复进行中**：1 / 10（reka-flash-3 服务启动中，metax-60）
-- **尚未开始**：0 / 10
+- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~28/50）
+- **修复暂停**：1 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%，容器已停止）
+- **尚未开始**：0 / 10（EXAONE ✅ 已完成）
 
 ### 🟡 当前运行中的服务
-
-**metax-58**
-
-| 模型 | GPU | 端口 | TP | 数据集 | 题数 |
-|------|:---:|:----:|:--:|:------:|:----:|
-| EXAONE-4.0-32B | 0–3 | 8000 | 4 | gpqa_diamond | 198（全量） |
 
 **metax-60**
 
 | 模型 | GPU | 端口 | TP | 数据集 | 题数 |
 |------|:---:|:----:|:--:|:------:|:----:|
-| Phi-3.5-mini-instruct | 0 | 8001 | 1 | gpqa_diamond | —（已完成） |
-| Phi-4-mini-instruct | 1 | 8002 | 1 | gpqa_diamond | —（已完成） |
-| Qwen3-30B-A3B-Thinking-2507 | 2–5 | 8000 | 4 | gpqa_diamond | —（已完成，74.0%） |
-| Baichuan-M2-32B | 6–7 | 8003 | 2 | gpqa_diamond | —（已完成，74.0%） |
-
-跟踪进度：
-
-```bash
-# metax-60 评测状态
-ssh metax-60 'for m in Qwen3-30B-A3B-Thinking-2507 Baichuan-M2-32B; do
-  echo "== $m =="; tail -3 /public-flash/models/release_run_logs/$m/eval_v1.log 2>/dev/null || echo "(未开始)";
-  cat /public-flash/models/release_run_logs/$m/verdict_v1.json 2>/dev/null || echo "(无 verdict)";
-done'
-
-# metax-58 EXAONE 198题评测状态
-ssh metax-58 'tail -5 /public-flash/models/release_run_logs/EXAONE-4.0-32B/eval_198.log 2>/dev/null'
-```
+| reka-flash-3 | 1,2 | 8001 | 2 | gpqa_diamond | 50（eval 进行中） |
 
 ---
 
