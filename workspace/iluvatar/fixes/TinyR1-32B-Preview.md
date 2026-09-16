@@ -48,7 +48,8 @@ ixsmi && python -c "import vllm; print(vllm.__version__)"
 
 ## Step 2：确认模型
 
-权重来源：`qihoo360/TinyR1-32B-Preview`（ModelScope）
+权重来源：`360zhinao/TinyR1-32B-Preview`（ModelScope）
+> 注：原失败报告中写的 `qihoo360/TinyR1-32B-Preview` 为错误路径（404），实际路径为 `360zhinao/TinyR1-32B-Preview`。
 
 ```bash
 ls /models/flagrelease/fixes_models/TinyR1-32B-Preview/
@@ -57,7 +58,7 @@ ls /models/flagrelease/fixes_models/TinyR1-32B-Preview/
 若需下载（eval-scope 容器里）：
 ```bash
 docker exec -it eval-scope bash
-modelscope download --model qihoo360/TinyR1-32B-Preview \
+modelscope download --model 360zhinao/TinyR1-32B-Preview \
   --local_dir /models/flagrelease/fixes_models/TinyR1-32B-Preview
 ```
 
