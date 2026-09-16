@@ -87,10 +87,10 @@ vllm serve /models/flagrelease/fixes_models/${model_name} \
 
 若 OOM → 降 `--max-model-len 16384` 或升至 TP=8。
 
-| 迭代 | 黑名单补充 | TP | 结果 | 备注 |
-|------|----------|-----|------|------|
-| 第1次 | 无 | 4 | | |
-| 第2次 | | | | |
+| 迭代 | 黑名单 | TP | attention-backend | 端口 | 结果 | 备注 |
+|------|--------|-----|------------------|------|------|------|
+| 第1次 | sort,sort_stable | 4 | TRITON_ATTN | 8000 | ❌ GPQA 56.0% (NV 63.0%，↓11.11%) | 服务正常起，精度退化 |
+| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 4 | TRITON_ATTN | 8000 | ⏭️ 跳过 | TRITON_MLA 崩溃（MLACommonImpl init compat）；改回 TRITON_ATTN；eval 启动后决定跳过（数量已够，不需要修复） |
 
 ## Step 4：评测
 
@@ -109,7 +109,8 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
-| 第1次 | | | | |
+| 第1次 | sort,sort_stable | 56.0% | — | 50题小样本；NV 63.0%，↓11.11%，超容差 |
+| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 评测进行中（198题全量） | — | 2026-09-16 18:47 启动；eval pid 716 in eval-scope |
 
 ## 现象
 （贴启动失败关键行；原报告全空，37分钟即结束）

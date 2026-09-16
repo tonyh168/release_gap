@@ -93,10 +93,10 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 # 观察响应时间；若 TTFT 仍 >100s，排查是否 Triton 编译问题（首次编译正常，第二次应很快）
 ```
 
-| 迭代 | 黑名单补充 | TP | 结果 | 备注 |
-|------|----------|-----|------|------|
-| 第1次 | 无 | 2 | | |
-| 第2次 | | | | |
+| 迭代 | 黑名单 | TP | attention-backend | 端口 | 结果 | 备注 |
+|------|--------|-----|------------------|------|------|------|
+| 第1次 | sort,sort_stable | 2 | TRITON_MLA | 8002 | ❌ GPQA 54.0% (NV 60.0%，↓10.0%) | 服务正常起，精度退化 |
+| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 2 | TRITON_ATTN | 8002 | 评测进行中（198题全量） | 扩大黑名单，评测全量数据 |
 
 ## Step 4：评测
 
@@ -117,7 +117,8 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
-| 第1次 | | | | |
+| 第1次 | sort,sort_stable | 54.0% | — | 50题小样本；NV 60.0%，↓10.0%，超容差 |
+| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 评测进行中（198题全量） | — | 2026-09-16 18:39 启动；eval pid 513 in eval-scope；3.5 tok/s 正常推理 |
 
 ## 现象
 （原 V1 TTFT=244727ms，精度数据空；新镜像冒烟延迟 / GPQA 结果）
