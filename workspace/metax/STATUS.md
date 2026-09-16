@@ -33,10 +33,10 @@
 
 ## 当前进度快照
 
-- **精度已通过**：7 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
-- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~28/50）
+- **精度已通过**：8 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
+- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~43/50）
 - **修复暂停**：1 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%，容器已停止）
-- **尚未开始**：0 / 10（EXAONE ✅ 已完成）
+- **尚未开始**：0 / 10
 
 ### 🟡 当前运行中的服务
 
@@ -84,16 +84,19 @@
 - **评测结果**：74.0%（37/50），NV 64.0%（↑10pt 反超），accuracy_compare 退出码 0
 - **注意**：fast_gpqa crash 在 runaway 后处理阶段（`detect_runaway` 收到 list 类型 content），50 题已全部评完，从 evalscope reviews 补计分
 
-- **历史结果**（metax-57，50 题）：58%（29/50），NV 62.0%，noise_zone=true（2.0 题差，噪声阈值），退出码 0
-- **本次重跑**（metax-58）：198 题全量评测，排除小样本噪声，结果待出
-- **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=4（GPU 0–3），port 8000
-
 ### GLM-4-32B-0414（✅ 达标）
 
 - **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=2（GPU 0–1），port 8003，一次起成功无需调整黑名单
 - **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
 - **评测结果**：52%（26/50），NV 55.0%，noise_zone=true（1.5 题差 ≤ 2 题阈值），accuracy_compare 退出码 0
 - **注意**：原报告 V1–V4 全空（服务启动就崩）；本次 plugin-FL 默认黑名单覆盖了 GLM-4 崩溃算子，无需二分排查
+
+### EXAONE-4.0-32B（✅ 达标）
+
+- **关键策略**：默认黑名单 + eager，`VLLM_FL_USE_FLAGGEMS_ATTN=0`，TP=4（GPU 0–3），port 8000，mode=standard（非 thinking）
+- **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
+- **评测结果**：63.13%（125/198，全量 198 题），NV 62.0%（↑1.13pt 反超），accuracy_compare 退出码 0
+- **注意**：原报告 V1–V4 全空（Operator crash）；默认黑名单一次起成功。fast_gpqa score=null（解析 bug），从 evalscope reviews 的 `sample_score.score.value.accuracy` 补计分。50 题 noise_zone 达标后重跑 198 题全量排除噪声，干净通过。EXAONE 输出以 `Answer: X`（首字母大写，非全大写 `ANSWER:`）结尾，自行后处理需用 `re.IGNORECASE`。机器：metax-58
 
 ---
 
