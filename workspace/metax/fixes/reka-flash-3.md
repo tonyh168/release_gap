@@ -129,14 +129,15 @@ mkdir -p /models/release_run_logs/${model_name}
 
 **启动日志关键行**：
 ```
-（待填写）
+✅ 服务正常启动，port 8001，TP=2，GPU 1,2
 ```
 
 ### 迭代记录（启动阶段）
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST 变化 | TP | 结果 | 日志关键报错 |
 |------|------------------------------|----|------|-------------|
-| v1 | 默认 | TBD | （待填写） | |
+| v1 | 默认（mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice） | 2 | ✅ 启动成功 | 无 |
+| v2 | 扩展加 rms_norm,silu_and_mul | 2 | ✅ 启动成功 | 无 |
 
 ### 冒烟验证
 
@@ -152,7 +153,7 @@ curl -s http://localhost:8001/v1/chat/completions -H "Content-Type: application/
   -d '{"model":"'"${model_name}"'","messages":[{"role":"user","content":"请详细解释牛顿三大运动定律，并各举一个日常生活中的实例，要求每条定律的解释不少于100字。"}],"max_tokens":512,"temperature":0}'
 ```
 
-**冒烟结果**：（待填写）
+**冒烟结果**：✅ v1 冒烟通过，服务正常出题，29-44 tok/s
 
 ---
 
@@ -184,32 +185,58 @@ python3 /workspace/eval_scripts/accuracy_compare.py \
 
 | 迭代 | VLLM_FL_FLAGOS_BLACKLIST | GPQA 正确率 | accuracy_compare 退出码 | 备注 |
 |------|--------------------------|------------|------------------------|------|
-| v1 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | （待填写） | （待填写） | |
+| v1 | mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice | 44%（22/50）❌ | 1 | rel_drop=25.42%，远超 5% 容差；score=null（fast_gpqa 解析失败），从 evalscope 报告补填 44.0 |
+| v2 | 默认 + rms_norm,silu_and_mul | 42%（21/50）❌ | 1 | rel_drop=28.81%，比 v1 更差；扩展黑名单对 reka-flash-3 无效 |
 
-**verdict.json 原文**：
+**verdict_v1.json 原文**：
 ```json
-（待填写）
+{
+  "baseline_mode": "nv_reference",
+  "model": "reka-flash-3",
+  "metric": "gpqa_diamond",
+  "nv": { "score": 59.0, "source": "NV 实测" },
+  "current": { "score": 44.0, "mode": "standard" },
+  "tolerance": 0.05,
+  "rel_drop": 0.2542,
+  "rel_drop_pct": 25.42,
+  "abs_diff": -15.0,
+  "aligned": false,
+  "noise_zone": false,
+  "message": "精度不达标: 当前=44.00%, NV=59.00%, 相对退化=25.42% > 容差 5.0%"
+}
 ```
 
 ---
 
 ## 现象
 
-（待填写）
+- v1（默认黑名单）：44%（22/50），rel_drop=25.42%，远超 5% 容差，不达标
+- v2（加 rms_norm,silu_and_mul）：42%（21/50），rel_drop=28.81%，比 v1 更差
+- fast_gpqa score=null（两轮均如此），从 evalscope 报告手工补填
+- eval_v1 耗时 94 分钟，eval_v2 耗时约 65 分钟（题均约 75s，reasoning 模型？）
+- v1/v2 最后 2 题卡挂（evalscope 概率性卡题），通过等待自然恢复
 
 ## 定位
 
-（待填写）
+- plugin-FL 对 reka-flash-3 存在系统性精度退化，与原始报告（V2→V3 精度从 40% 降到 52.02%）一致
+- reka-flash-3 架构为 LLaMA 基（model_type=llama），非 MoE，无 MLA，但 TTFT 极高（62s），推测 prefill 路径有特殊算子
+- 扩展黑名单加 rms_norm/silu_and_mul 对本模型无效，说明退化来源不在这两个算子
+- 与 SOLAR-10.7B-Instruct-v1.0 类似：plugin-FL 对部分 dense 模型有无法通过简单黑名单修复的精度问题
 
 ## 处置
 
-（待填写）
+两轮均不达标，暂停修复：
+- v1：默认黑名单，44%❌
+- v2：扩展黑名单（+rms_norm,silu_and_mul），42%❌
 
 ## 结果
 
-- 修复后分 / NV 基线：（待填写）/ 59
-- 达标判定（accuracy_compare 退出码）：（待填写）
+- 修复后分 / NV 基线：44.0（v1 最优）/ 59.0，未达标
+- 达标判定：accuracy_compare 退出码 1（两轮均不达标）
+- **状态：修复暂停**，与 SOLAR-10.7B 同样处理
 
 ## 提炼到 KNOWLEDGE 的条目
 
-（待填写）
+- reka-flash-3 plugin-FL 精度退化无法通过默认黑名单或扩展黑名单（rms_norm/silu_and_mul）修复，暂无解法
+- fast_gpqa score=null 是 reka-flash-3 的已知问题（同 EXAONE/Qwen3-Thinking），需从 evalscope 报告手工补填
+- 单题卡挂问题在 reka-flash-3 上也存在（v2 最后 2 题），但最终自然恢复，无需 eval_missing 补评

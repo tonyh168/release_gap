@@ -1,6 +1,6 @@
 # Metax 模型修复状态总览
 
-> 更新：2026-09-16 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
+> 更新：2026-09-17 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
 
 ## 图例
 
@@ -27,24 +27,20 @@
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
 | SOLAR-10.7B-Instruct-v1.0 | ❌ 修复暂停 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=24.0%❌ v2=26.0%❌ v3=20.0%❌ | metax-60 / 容器已停止 | **暂停**（三轮均不达标，最优 v2=26%；plugin-FL 导致格式退化，模型生成冗长推理不输出 ANSWER 字母） |
-| reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | — | metax-60 / `flagrelease-fix-reka-flash-3` / :8001 | **v1 eval 跑中**（默认黑名单，TP=2，GPU 1,2；reasoning 模型，预计 9+h；服务 29-44 tok/s 正常出题） |
+| reka-flash-3 | ❌ 修复暂停 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | v1=44%❌ v2=42%❌ | metax-60 / `flagrelease-fix-reka-flash-3` / :8001（容器运行中） | **暂停**（两轮均不达标，v1 默认黑名单 rel_drop=25.42%，v2 扩展黑名单 rel_drop=28.81%，plugin-FL 对 reka-flash-3 有系统性精度退化，无法通过黑名单修复） |
 
 ---
 
 ## 当前进度快照
 
 - **精度已通过**：8 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
-- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~43/50）
-- **修复暂停**：1 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%，容器已停止）
+- **评测进行中**：0 / 10
+- **修复暂停**：2 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%；reka-flash-3，两轮均不达标，最优 v1=44%，plugin-FL 系统性退化无法修复）
 - **尚未开始**：0 / 10
 
 ### 🟡 当前运行中的服务
 
-**metax-60**
-
-| 模型 | GPU | 端口 | TP | 数据集 | 题数 |
-|------|:---:|:----:|:--:|:------:|:----:|
-| reka-flash-3 | 1,2 | 8001 | 2 | gpqa_diamond | 50（eval 进行中） |
+无（所有容器已停止，2026-09-17）
 
 ---
 
