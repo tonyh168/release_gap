@@ -70,7 +70,7 @@ modelscope download --model 360zhinao/TinyR1-32B-Preview \
 ```bash
 export GEMS_VENDOR=iluvatar
 export VLLM_PLUGINS=fl
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=3,4,7,8
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=72000
@@ -81,10 +81,13 @@ mkdir -p /models/release_run_logs/${model_name}
 vllm serve /models/flagrelease/fixes_models/${model_name} \
   --served-model-name ${model_name} --dtype bfloat16 \
   --tensor-parallel-size 4 --gpu-memory-utilization 0.9 \
-  --port 8000 --attention-backend TRITON_MLA \
+  --port 8001 --attention-backend TRITON_ATTN \
   --enforce-eager --trust-remote-code \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 ```
+
+> **注意**：TinyR1-32B-Preview 基于 Qwen2.5-32B（标准 GQA），使用 `TRITON_ATTN`，**不是** `TRITON_MLA`。
+> 用 `TRITON_MLA` 会 crash：`MLACommonImpl.__init__() missing 7 required positional arguments`。
 
 若仍 crash，抓栈后补充黑名单：
 ```bash
@@ -93,8 +96,7 @@ export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable,<崩溃算子>
 
 | 迭代 | 黑名单补充 | 结果 | 备注 |
 |------|----------|------|------|
-| 第1次 | 无 | | |
-| 第2次 | | | |
+| 第1次 | 无（sort,sort_stable 基础黑名单） | ❌ GPQA 58.0%（50题，NV 64.0%，↓9.38%） | TRITON_ATTN，TP=4，GPUs 3,4,7,8，port 8001；2026-09-17 启动，18:53 评测完成；fast_gpqa.py detect_runaway bug crash，分数从 evalscope 报告 `outputs/gpqa_diamond/20260917_075834` 恢复 |
 
 ## Step 4：评测
 
@@ -116,18 +118,35 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 | 第1次 | | | | |
 
 ## 现象
-（贴启动失败关键行；原报告无镜像产出）
+
+- iter1（vLLM 0.24.0，sort,sort_stable 黑名单，TRITON_ATTN，TP=4，GPUs 3,4,7,8，port 8001）：
+  - 服务正常启动，原报告无镜像产出的问题已由新镜像解决。
+  - 评测于 2026-09-17 启动，18:53 跑完（50题，耗时 181m 47s）。
+  - fast_gpqa.py 因 thinking 模型 list content 触发 detect_runaway AttributeError 崩溃，score 字段未写出。
+  - 从 evalscope 报告 `outputs/gpqa_diamond/20260917_075834/reports/TinyR1-32B-Preview/gpqa_diamond.json` 恢复：`score=0.58` → **58.0%**，50题全部 succeeded。
+  - 性能数据：mean TTFT=6378ms，avg_output_tps=4.98 tok/s（32B TP=4，思维链模型，平均输出 11250 tokens/题，属正常区间）。
 
 ## 定位
-（vLLM 0.24.0 是否解决 crash；若否，具体缺实现的算子名）
+
+- vLLM 0.24.0 解决了原服务启动失败问题，服务正常起来。
+- sort,sort_stable 基础黑名单下精度 58.0%，NV 基线 64.0%，相对退化 9.38%，超出 5% 容差。
+- 差距约 3 题，可考虑扩大黑名单进一步排查。
 
 ## 处置
-（补充黑名单 / 调 TP / 降 max-model-len）
+
+iter1 不达标（58.0% vs 64.0%，↓9.38%）。下一步选项：
+1. 扩大黑名单（追加 mm、bmm、addmm 等算子）重跑
+2. 视资源安排决定是否继续迭代
+
+当前结论：**结果记录，待资源安排决定是否继续**。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：**58.0%**（50题，从 evalscope 报告恢复）
+- NV 基线：**64.0%**
+- 相对退化：↓9.38%（超 5% 容差）
+- 达标判定：**❌ 不达标**
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+TinyR1-32B-Preview（Qwen2.5-32B GQA 架构，TP=4）在 vLLM 0.24.0 + sort,sort_stable 黑名单 + TRITON_ATTN 下服务可正常起来，GPQA 58.0% vs NV 64.0%（↓9.38%），仍不达标；原报告服务启动失败已由新镜像修复。

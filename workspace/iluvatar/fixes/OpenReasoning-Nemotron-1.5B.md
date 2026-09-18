@@ -91,7 +91,7 @@ grep -E "Error|crash|Traceback|RuntimeError|NotImplemented" \
 
 | 迭代 | 黑名单 | TP | 端口 | 结果 | 备注 |
 |------|--------|----|------|------|------|
-| 第1次 | sort,sort_stable | 1 | 8011 | | |
+| 第1次 | sort,sort_stable | 1 | 8011 | ❌ mmlu 35.0%（NV 52.21，↓32.9%）；math_500 进行中 | TRITON_ATTN；服务健康（190 tok/s）；mmlu 完成 2026-09-18 01:55；math_500 进行中（156/200 at 04:03，预计 ~05:30 完成） |
 
 ## Step 4：smoke test
 
@@ -143,25 +143,32 @@ python3 accuracy_compare.py \
 
 | 迭代 | 黑名单 | mmlu | math_500 | 退出码 | 备注 |
 |------|--------|------|----------|--------|------|
-| 第1次 | | | | | |
+| 第1次 | sort,sort_stable | **35.0%**（1140题，NV 52.21，↓32.9%） | 进行中（156/200 at 2026-09-18 04:03） | — | mmlu 分数从 evalscope 报告 `outputs/mmlu/20260917_033152` 恢复；fast_gpqa.py detect_runaway bug crash |
 
 ## 现象
 
-（首次运行，待填写）
+- iter1（sort,sort_stable 黑名单，TRITON_ATTN，TP=1，GPU 1，port 8011）：
+  - 服务正常启动，smoke test 通过，生成速度约 190 tok/s（1.5B，正常）。
+  - MMLU 评测完成（1140题，2026-09-18 01:55），fast_gpqa.py 因 thinking 模型 list content 触发 detect_runaway AttributeError 崩溃，score 字段未写出。
+  - 从 evalscope 报告 `/workspace/eval_scripts/outputs/mmlu/20260917_033152/reports/OpenReasoning-Nemotron-1.5B/mmlu.json` 恢复：`score=0.35` → **35.0%**，1140 题。
+  - math_500 评测仍在进行中（156/200 at 04:03，pid 5540 健康，预计约 05:30 完成）。
 
 ## 定位
 
-（待填写）
+- MMLU 退化：35.0% vs NV 52.21（↓32.9%），差距 17.21 分，远超 5% 容差。
+- 基础黑名单（sort,sort_stable）对 OpenReasoning-Nemotron-1.5B 效果极差，精度损失来源于其他算子。
+- math_500 结果待出，但 MMLU 退化幅度如此之大，math_500 大概率同样不达标。
 
 ## 处置
 
-（待填写）
+MMLU 严重不达标（↓32.9%），graph 模式 capture 在 batch 56 时 OOM（9/51 graphs 成功，VRAM 耗尽），graph 模式暂无法用。精度与 graph/eager 模式无关，精度损失来源于基础黑名单之外的其他算子。差距过大（17分），常规扩黑名单路径修复难度极高，**放弃**。
 
 ## 结果
 
-- 修复后分 / NV 基线：— / mmlu 52.21，math_500 84.0
-- 达标判定（accuracy_compare 退出码）：—
+- MMLU：**35.0%**（1140题，NV 52.21，↓32.9%）— ❌ 不达标
+- math_500：已中止（容器已停）
+- 达标判定：**放弃**（MMLU 差距 17.21 分，远超 5% 容差，graph 模式亦 OOM）
 
 ## 提炼到 KNOWLEDGE 的条目
 
-（完成后填写）
+OpenReasoning-Nemotron-1.5B 在 sort,sort_stable 基础黑名单下 MMLU=35.0%（NV 52.21，↓32.9%），严重不达标；精度损失来源于基础黑名单之外的其他算子。

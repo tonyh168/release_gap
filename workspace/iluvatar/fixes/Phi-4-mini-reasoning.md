@@ -90,7 +90,7 @@ grep -E "Error|crash|Traceback|RuntimeError|NotImplemented" \
 
 | 迭代 | 黑名单 | TP | 端口 | 结果 | 备注 |
 |------|--------|----|------|------|------|
-| 第1次 | sort,sort_stable | 1 | 8012 | | |
+| 第1次 | sort,sort_stable | 1 | 8012 | ❌ mmlu 58.07%（NV 72.83，↓20.3%）+ math_500 41.0%（NV 88.2，↓53.5%） | TRITON_ATTN；评测日志在容器内 `eval_mmlu.log` / `eval_math.log`；分数从 evalscope 报告恢复（mmlu: `outputs/mmlu/20260917_033152`，math_500: `outputs/math_500/20260917_102103`） |
 
 ## Step 4：smoke test
 
@@ -146,21 +146,30 @@ python3 accuracy_compare.py \
 
 ## 现象
 
-（首次运行，待填写）
+- iter1（sort,sort_stable 黑名单，TRITON_ATTN，TP=1，GPU 2，port 8012）：
+  - 服务正常启动，smoke test 通过，生成速度约 11 tok/s（3.8B 单卡，thinking 模型，正常）。
+  - MMLU 评测完成（1140题），从 evalscope 报告 `outputs/mmlu/20260917_033152` 恢复：**58.07%**。
+  - math_500 评测完成（200题），从 evalscope 报告 `outputs/math_500/20260917_102103` 恢复：**41.0%**。
+  - eval log 未写入 NFS，分数仅存于 eval-scope 容器内 evalscope 输出。
 
 ## 定位
 
-（待填写）
+- MMLU 退化：58.07% vs NV 72.83（↓20.3%），差距 14.76 分，远超 5% 容差。
+- math_500 退化：41.0% vs NV 88.2（↓53.5%），差距 47.2 分，极度不达标。
+- 基础黑名单（sort,sort_stable）对 Phi-4-mini-reasoning 效果极差，说明精度损失来源于其他算子。
+- 数学推理任务对精度更敏感，41% 的 math_500 分数提示模型推理链受到严重干扰。
 
 ## 处置
 
-（待填写）
+iter1 双指标严重不达标，差距巨大（math_500 差距超 50%），常规扩黑名单路径修复难度极高，暂不继续迭代。
 
 ## 结果
 
-- 修复后分 / NV 基线：— / mmlu 72.83，math_500 88.2
-- 达标判定（accuracy_compare 退出码）：—
+- 修复后分数：MMLU **58.07%**（1140题）；math_500 **41.0%**（200题）
+- NV 基线：MMLU 72.83；math_500 88.2
+- 相对退化：MMLU ↓20.3%；math_500 ↓53.5%
+- 达标判定：**❌ 不达标**（双指标均严重超出 5% 容差）
 
 ## 提炼到 KNOWLEDGE 的条目
 
-（完成后填写）
+Phi-4-mini-reasoning 在 sort,sort_stable 基础黑名单下 MMLU=58.07%（NV 72.83，↓20.3%）、math_500=41.0%（NV 88.2，↓53.5%），双指标严重不达标；精度损失来源于基础黑名单之外的其他算子，数学推理任务尤为敏感。
