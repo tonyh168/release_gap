@@ -95,7 +95,7 @@ mkdir -p /models/release_run_logs/${model_name}
 vllm serve /models/flagrelease/fixes_models/${model_name} \
   --served-model-name ${model_name} --dtype bfloat16 \
   --tensor-parallel-size 1 --gpu-memory-utilization 0.9 \
-  --port 8000 --attention-backend TRITON_MLA \
+  --port 8006 --attention-backend TRITON_ATTN \
   --enforce-eager --trust-remote-code \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 
@@ -106,8 +106,8 @@ export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable,<崩溃算子>
 
 | 迭代 | 黑名单补充 | 结果 | 备注 |
 |------|----------|------|------|
-| 第1次 | 无 | | |
-| 第2次 | | | |
+| 第1次 | sort,sort_stable | ✅ 服务正常启动 | TRITON_ATTN，TP=1，GPU 1，port 8006 |
+| 第2次 | sort,sort_stable,mm,addmm | ✅ 服务正常启动 | iter2，参数同上 |
 
 ---
 
@@ -126,24 +126,35 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
-| 第1次 | | | | |
-| 第2次 | | | | |
+| 第1次 | sort,sort_stable | **30.0%**（50题） | 1（↓18.9%，NV 37.0%） | TRITON_ATTN，TP=1，GPU 1，port 8006 |
+| 第2次 | sort,sort_stable,mm,addmm | **22.0%**（50题） | 1（↓40.54%，NV 37.0%） | iter2；mm/addmm 黑名单使精度更差，不适用于该模型 |
 
 ---
 
 ## 现象
-（贴启动崩溃关键行；原报告全空，FlagGems 5.3.0rc2 环境 crash）
+
+原报告（FlagGems 5.3.0rc2）：服务启动即 Operator crash，全部评测数据为空。  
+新镜像（FlagGems 5.3.4.post1 + TRITON_ATTN）：服务正常启动，iter1 GPQA 30.0%（NV 37.0%，↓18.9%）。
 
 ## 定位
-（FlagGems 5.3.4.post1 正式版是否修复该 crash；若否，哪个算子仍缺实现）
+
+- iter1 `sort,sort_stable` 黑名单：服务可起，GPQA 30.0%，仍差 7.0 pct（差 3.5 题）。
+- iter2 追加 `mm,addmm` 黑名单：GPQA 反降至 22.0%（↓40.54%），说明 `mm`/`addmm` 是该模型精度的关键算子，不可黑名单化。
+- 结论：`sort,sort_stable` 黑名单是必要的（无之则 crash），但 `mm`/`addmm` 对该模型有害，精度差距的根因尚未定位。
 
 ## 处置
-（加黑名单算子 / 调整 TRITON_MLA 设置）
+
+- iter1：`VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable`，`TRITON_ATTN`，TP=1，GPU 1，port 8006。
+- iter2：追加 `mm,addmm` 至黑名单，结果更差，已验证方向错误。
+- 下一步方向：在 `sort,sort_stable` 基础上探查其他可能影响精度的算子（排除 `mm`/`addmm`）；或排查 `chat_template`/`dtype` 等非算子因素。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- iter1 GPQA：**30.0%**（50 题，NV 37.0%，↓18.9%）；accuracy_compare 退出码 1（不达标）
+- iter2 GPQA：**22.0%**（50 题，NV 37.0%，↓40.54%）；accuracy_compare 退出码 1（不达标，更差）
+- evalscope 报告路径：`outputs/gpqa_diamond/20260918_055330`
+- 达标判定：❌ 未达标；iter2 证明 mm/addmm 黑名单对该模型有害
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+`mm`/`addmm` 算子对 NeuralDaredevil-8B-abliterated（Llama 架构）是精度关键算子，加入黑名单会使 GPQA 从 30.0% 跌至 22.0%，不可黑名单化。
