@@ -16,7 +16,7 @@ AgentCPM-Report 为 7B 量级。TP 计算：7B bf16 ~14 GB，单卡 32 GB → **
 
 ---
 
-## 环境（实际运行时填写）
+## 环境
 
 | 项目 | 值 |
 |------|---|
@@ -24,8 +24,9 @@ AgentCPM-Report 为 7B 量级。TP 计算：7B bf16 ~14 GB，单卡 32 GB → **
 | 容器名 | `flagrelease-fix-agentcpm-report` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907` |
 | 模型路径 | `/models/flagrelease/fixes_models/AgentCPM-Report` |
-| 卡号 | `CUDA_VISIBLE_DEVICES=0`（TP=1）|
-| 实际 vLLM 版本 | |
+| GPU | `CUDA_VISIBLE_DEVICES=0`（TP=1，端口 8002） |
+| attention-backend | `TRITON_ATTN`（iter2；AgentCPM-Report 为非 MLA 架构） |
+| 实际 vLLM 版本 | 0.24.0（vllm_fl0.24.0） |
 
 ---
 
@@ -91,10 +92,12 @@ export VLLM_RPC_TIMEOUT=72000000
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 model_name=AgentCPM-Report
 mkdir -p /models/release_run_logs/${model_name}
+# iter2（最终达标配置）：TRITON_ATTN，port 8002
+# iter1 曾用 TRITON_MLA → GPQA 40.0%（50题）❌；AgentCPM-Report 为非 MLA 架构，TRITON_MLA 引入精度误差
 vllm serve /models/flagrelease/fixes_models/${model_name} \
   --served-model-name ${model_name} --dtype bfloat16 \
   --tensor-parallel-size 1 --gpu-memory-utilization 0.9 \
-  --port 8000 --attention-backend TRITON_MLA \
+  --port 8002 --attention-backend TRITON_ATTN \
   --enforce-eager --trust-remote-code \
   2>&1 | tee /models/release_run_logs/${model_name}/serve.log
 
@@ -116,7 +119,7 @@ export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable,<疑似误差算子>
 docker exec -it eval-scope bash
 cd /workspace/release_评测标准
 model_name=AgentCPM-Report
-python3 fast_gpqa.py --model-name ${model_name} --api-base http://127.0.0.1:8000/v1 \
+python3 fast_gpqa.py --model-name ${model_name} --api-base http://127.0.0.1:8002/v1 \
   --output /models/release_run_logs/${model_name}/gpqa.json
 python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.json \
   --nv-baseline ${model_name} --nv-baseline-file nv_baseline.yaml --json \
@@ -124,6 +127,38 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 ```
 
 > NV 基线 GPQA=46.0%，相对容忍 5%，即需达到 ≥43.7%。
+
+> **iter2 evalscope 分数重建**：fast_gpqa.py 因 thinking 模型 detect_runaway bug 崩溃，在 eval-scope 容器内用以下命令从 evalscope 报告重建 result JSON 并运行 compare：
+
+```bash
+# eval-scope 容器内执行
+REPORT=/workspace/eval_scripts/outputs/gpqa_diamond/20260917_034638/reports/AgentCPM-Report/gpqa_diamond.json
+model_name=AgentCPM-Report
+LOG=/models/release_run_logs/${model_name}
+EVAL_DIR=/workspace/eval_scripts
+
+# 1. 从 evalscope 报告读取分数，手写最小 result JSON
+python3 -c "
+import json, sys
+d = json.loads(open(sys.argv[1]).read())
+score = d['metrics'][0]['score'] * 100
+total = d['metrics'][0]['num']
+out = {'model': '${model_name}', 'benchmark': 'gpqa_diamond', 'mode': 'thinking',
+       'score': score, 'total_questions': total}
+json.dump(out, open('${LOG}/gpqa_diamond_result.json', 'w'), ensure_ascii=False, indent=2)
+print('score:', score, 'total:', total)
+" ${REPORT}
+# → score: 49.49 total: 198
+
+# 2. 运行 accuracy_compare
+python3 ${EVAL_DIR}/accuracy_compare.py \
+  --v2  ${LOG}/gpqa_diamond_result.json \
+  --nv-baseline ${model_name} \
+  --nv-baseline-file ${EVAL_DIR}/nv_baseline.yaml \
+  --metric gpqa_diamond --json \
+  --output ${LOG}/verdict_gpqa_diamond.json
+# → 退出码 0，verdict 写入 verdict_gpqa_diamond.json
+```
 
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
@@ -152,6 +187,29 @@ iter2 达标，完成。
 - NV 基线：46.0%
 - 相对变化：↑7.59%（反超基线）
 - 达标判定：**✅ 达标**（accuracy_compare 退出码 0）
+
+`verdict_gpqa_diamond.json`（iter2，accuracy_compare 输出）：
+
+```json
+{
+  "baseline_mode": "nv",
+  "model": "AgentCPM-Report",
+  "metric": "gpqa_diamond",
+  "nv": {
+    "score": 46.0,
+    "source": "nv_baseline.yaml"
+  },
+  "current": {
+    "score": 49.49,
+    "total_questions": 198,
+    "source": "gpqa_diamond_result.json"
+  },
+  "tolerance": 0.05,
+  "rel_drop": -0.0759,
+  "aligned": true,
+  "message": "精度达标: 当前=49.49%, NV=46.00%, 相对退化=-7.59% (容差 5.0%)"
+}
+```
 
 ## 提炼到 KNOWLEDGE 的条目
 
