@@ -181,32 +181,48 @@ python3 ${EVAL_DIR}/accuracy_compare.py \
 
 iter2 达标，完成。
 
+**0918 补记**：本文档 Step 4 中的"重建 verdict"命令此前只写入文档、**未实际执行**——机器上
+`gpqa_diamond_result.json` / `verdict_gpqa_diamond.json` 一直是 iter1 的旧产物（40.0%、`aligned=false`），
+与结论相反。已于 2026-09-18 实跑该命令修正：
+
+- 先备份 iter1 产物为 `gpqa_diamond_result_iter1.json` / `verdict_gpqa_diamond_iter1.json`（保留，未删除）
+- 从 evalscope 报告重建 → `score=49.49, total=198`
+- 实跑 `accuracy_compare.py` → **exit=0，`aligned=true`**
+
+下方 verdict JSON 现为机器上的真实文件内容（非预期值）。
+
 ## 结果
 
 - 修复后 GPQA 正确率：**49.49%**（198题全量，从 evalscope 报告恢复）
 - NV 基线：46.0%
 - 相对变化：↑7.59%（反超基线）
-- 达标判定：**✅ 达标**（accuracy_compare 退出码 0）
+- 达标判定：**✅ 达标**（accuracy_compare 退出码 0，2026-09-18 实跑复核）
 
 `verdict_gpqa_diamond.json`（iter2，accuracy_compare 输出）：
 
 ```json
 {
-  "baseline_mode": "nv",
+  "baseline_mode": "nv_reference",
   "model": "AgentCPM-Report",
   "metric": "gpqa_diamond",
   "nv": {
     "score": 46.0,
-    "source": "nv_baseline.yaml"
+    "source": "NV 实测"
   },
   "current": {
+    "path": "/models/release_run_logs/AgentCPM-Report/gpqa_diamond_result.json",
+    "model": "AgentCPM-Report",
     "score": 49.49,
-    "total_questions": 198,
-    "source": "gpqa_diamond_result.json"
+    "mode": "thinking"
   },
   "tolerance": 0.05,
+  "timestamp": "2026-09-18T07:09:02.652154",
+  "missing_nv": false,
   "rel_drop": -0.0759,
+  "rel_drop_pct": -7.59,
+  "abs_diff": 3.49,
   "aligned": true,
+  "noise_zone": false,
   "message": "精度达标: 当前=49.49%, NV=46.00%, 相对退化=-7.59% (容差 5.0%)"
 }
 ```

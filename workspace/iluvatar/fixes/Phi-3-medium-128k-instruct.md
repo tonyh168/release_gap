@@ -165,16 +165,21 @@ iter2：扩展至 11 算子（追加 to_copy,copy_,rms_norm,fused_add_rms_norm,s
 
 iter3：在 iter2 基础上追加 layer_norm,native_layer_norm,gelu,gelu_new,gelu_fast,gelu_tanh（17 算子总计，覆盖 Phi-3 实际使用的 LayerNorm + GEGLU）→ 24.0%，三次完全相同。**算子黑名单路径彻底排查完毕。**
 
-退化根因不在任何可通过黑名单隔离的 GPU 算子。下一步方向（优先级排序）：
+退化根因不在任何可通过黑名单隔离的 GPU 算子。下一步方向（优先级排序，**均未执行**）：
 1. **chat_template**：检查 fast_gpqa 构造的 prompt 是否符合 Phi-3 tokenizer 格式（`<|user|>`/`<|assistant|>` 标签），格式错误会系统性拉低分数
 2. **sampling 参数**：确认 temperature=0 / max_tokens=2048 与 NV 评测一致
 3. **dtype**：切换至 `--dtype float32` 排除 bf16 精度损失
 4. 若以上均无效：考虑排查 attention mask 实现或扩样本确认是否为测量噪声
 
+**0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。** 三轮算子黑名单已彻底排查完毕（17 算子、
+含 Phi-3 实际使用的 LayerNorm + GEGLU），得分三次完全相同，继续排查只剩 chat_template/dtype 等非算子方向，暂不投入。
+
 ## 结果
 
-- 修复后分 / NV 基线：24.0% / 37.0%
-- 达标判定（accuracy_compare 退出码）：1（不达标，相对退化 35.14% > 容差 5%）
+- 修复后分 / NV 基线：**24.0%** / 37.0%
+- 达标判定（accuracy_compare 退出码）：1（不达标，相对退化 35.14% > 容差 5%，`aligned=false`）
+- 三轮得分完全一致：iter1/iter2/iter3 均为 24.0%，产出 `verdict.json` / `verdict_iter2.json` / `verdict_iter3.json` 三份 verdict，均 `aligned=false`
+- 0918 决策：不再修复
 
 ## 提炼到 KNOWLEDGE 的条目
 
