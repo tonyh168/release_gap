@@ -1,6 +1,6 @@
 # Metax 模型修复状态总览
 
-> 更新：2026-09-16 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
+> 更新：2026-09-18 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
 
 ## 图例
 
@@ -18,7 +18,7 @@
 
 | 模型 | 阶段 | 原始失败类型 | 评测指标 | NV基线 | 当前得分 | 机器 / 容器 / 端口 | 下一步 |
 |------|------|------------|---------|:------:|:-------:|-------------------|--------|
-| Phi-3-mini-128k-instruct | ✅ 已通过 | 精度偏差 4.0%（V2=38% vs NV=42%，性能 79.2% 踩线） | gpqa_diamond | 42.0 | **（待补充）** | metax-60 / `Phi-3-mini-128k-instruct_flagos` / :8000 | 完成，达标 |
+| Phi-3-mini-128k-instruct | ✅ 已通过 | 精度偏差 4.0%（V2=38% vs NV=42%，性能 79.2% 踩线） | gpqa_diamond | 33.0 | **v2: A=42%✅ B=44%✅ C=38%✅**（三路并行，扩展黑名单+rms_norm,silu_and_mul；v1=28%❌） | metax-60 / `Phi-3-mini-128k-instruct_flagos` / :8000 | 完成，达标（扩展黑名单+rms_norm,silu_and_mul；A 补评 index 11） |
 | Phi-3.5-mini-instruct | ✅ 已通过 | 精度不达标（V2=28%，V3=26%，超 5% 阈值） | gpqa_diamond | 26.0 | **34.0**（↑8pt，反超基线） | metax-60 / `flagrelease-fix-phi-3.5-mini-instruct` / :8001 | 完成，达标（doc_id 23/34 eval_missing2.py 补评） |
 | Phi-4-mini-instruct | ✅ 已通过 | 精度不达标（V3=28% vs NV=38%，plugin-FL GQA 精度退化） | gpqa_diamond | 38.0 | **44.0**（↑6pt，反超基线） | metax-60 / `flagrelease-fix-phi-4-mini-instruct` / :8002 | 完成，达标（v3 扩展黑名单 rms_norm,silu_and_mul，doc_id 2 补评） |
 | Qwen3-Coder-30B-A3B-Instruct | ✅ 已通过 | 服务启动失败 + 精度/性能不达标 + plugin 报错（四项全失败） | gpqa_diamond | 52.0 | **50.0**（噪声容忍达标） | metax-60 / `Qwen3-Coder-30B-A3B-Instruct_flagos` / :8002 | 完成，达标（MoE+MLA，默认黑名单 + VLLM_FL_USE_FLAGGEMS_ATTN=0） |
@@ -27,28 +27,31 @@
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
 | SOLAR-10.7B-Instruct-v1.0 | ❌ 修复暂停 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=24.0%❌ v2=26.0%❌ v3=20.0%❌ | metax-60 / 容器已停止 | **暂停**（三轮均不达标，最优 v2=26%；plugin-FL 导致格式退化，模型生成冗长推理不输出 ANSWER 字母） |
-| reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | — | metax-60 / `flagrelease-fix-reka-flash-3` / :8001 | **v1 eval 跑中**（默认黑名单，TP=2，GPU 1,2；reasoning 模型，预计 9+h；服务 29-44 tok/s 正常出题） |
+| reka-flash-3 | ❌ 修复暂停 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | v1=44%❌ v2=42%❌ | metax-60 / `flagrelease-fix-reka-flash-3` / :8001（容器运行中） | **暂停**（两轮均不达标，v1 默认黑名单 rel_drop=25.42%，v2 扩展黑名单 rel_drop=28.81%，plugin-FL 对 reka-flash-3 有系统性精度退化，无法通过黑名单修复） |
 
 ---
 
 ## 当前进度快照
 
-- **精度已通过**：8 / 10（Phi-3-mini-128k-instruct；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
-- **评测进行中**：1 / 10（reka-flash-3 v1 eval 跑中，metax-60，~43/50）
-- **修复暂停**：1 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%，容器已停止）
+- **精度已通过**：8 / 10（Phi-3-mini-128k-instruct **42%**（三路 A/B/C，v2 扩展黑名单）；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
+- **评测进行中**：0 / 10
+- **修复暂停**：2 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%；reka-flash-3，两轮均不达标，最优 v1=44%，plugin-FL 系统性退化无法修复）
 - **尚未开始**：0 / 10
 
 ### 🟡 当前运行中的服务
 
-**metax-60**
-
-| 模型 | GPU | 端口 | TP | 数据集 | 题数 |
-|------|:---:|:----:|:--:|:------:|:----:|
-| reka-flash-3 | 1,2 | 8001 | 2 | gpqa_diamond | 50（eval 进行中） |
+无（所有容器已停止，2026-09-17）
 
 ---
 
 ## 已完成修复详情
+
+### Phi-3-mini-128k-instruct（✅ 达标）
+
+- **关键策略**：三路并行稳定性验证，v2 扩展黑名单加 `rms_norm,silu_and_mul`，TP=1，enforce-eager，GPU 0/1/2，port 8000/8001/8002
+- **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice,rms_norm,silu_and_mul`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
+- **评测结果**：A=42%，B=44%，C=38%（三路均达标），NV 33.0%，accuracy_compare 退出码 0
+- **注意**：v1 默认黑名单 28%（rel_drop=15.15%）；v2 三路并行中 A 实例 index 11 卡挂，kill 后用 eval_missing_phi3mini_v2.py 补评（答对，latency 88.8s），合并 49 题结果后 42%
 
 ### Phi-3.5-mini-instruct（✅ 达标）
 
