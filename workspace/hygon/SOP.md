@@ -156,8 +156,11 @@ python3 accuracy_compare.py \
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
 - **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`）出分，`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。任何数据集都无基线 → 上报给发起人，不自行构造基线。
 - 评测输出与 serve 日志同落 `/models/release_run_logs/${model_name}/`，一个模型一个目录。
-- **精度不达标**：先看是否全关算子仍退化——若是，属 plugin 框架级退化（sarvam-m 结论），上报框架 bug；否则二分法缩白名单定位退化算子。见 KNOWLEDGE 二。
+- **精度不达标**：先审计逐题答案提取，区分模型错答和评测器误判；GPQA 同时对照 `score` 与 `evalscope_score`。然后用固定并发做 `FlagGems 开/关 × OOT 开/关` 2×2 受控实验，不要只做“全关 vs 全开”：两类算子可能单独无问题、组合时发生数值路径交互。收敛到 FlagGems 后，再二分缩白名单；收敛到 OOT 后，二分 OOT 白/黑名单。四组都退化才判定为 plugin/模型/硬件通用路径问题。见 KNOWLEDGE 二。
+- **受控 A/B**：使用 `--eval-batch-size N` 锁定并发，避免批处理数值差异成为混杂变量。慢速或易长输出模型显式传 `--max-tokens N` 固定生成窗口；显式指定后脚本会跳过会改写上限的截断探测，并在结果中保留 `max_tokens_overridden=true`、`truncation_check_skipped=true`。已验证慢速 thinking 模型可配合 `--skip-truncation-check`，但必须在结果中保留对应标记。
+- **缓存判因**：怀疑 prefix cache 影响精度时，开启组要在同一服务进程内依次跑冷缓存、热缓存各一轮，并记录 `/metrics` 中 `prefix_cache_queries_total` 和 `prefix_cache_hits_total` 的轮次增量；随后重启服务清空 KV 状态，显式关闭 prefix cache 后再跑两轮。四轮必须锁定同一题目 ID、target、并发和生成参数，并比较逐题最终答案及完整输出哈希。关闭缓存后仍波动，或不同缓存状态出现完全相同输出时，不得把 prefix cache 判为根因。
 - 小样本（50 题）绝对差 ≤2 题仍判达标。
+- **先验收可比性再比较**：NV 与 Hygon 必须核对 dataset ID/revision、split、实际题目 ID、题数、few-shot、seed、prompt/template、EvalScope 版本和 generation config。`nv_baseline.yaml` 若只有分数、没有原始结果/配置，只能做参考比较；不得仅凭当前 `fast_gpqa.py` 默认题数反推历史 NV 的题数。
 
 ## 5. 记录
 

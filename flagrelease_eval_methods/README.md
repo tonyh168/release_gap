@@ -94,6 +94,12 @@ python3 fast_gpqa.py --model-name Qwen3-8B --api-base http://localhost:8000/v1 -
 # GPQA 全量 198 题
 python3 fast_gpqa.py --model-name Qwen3-8B --api-base http://localhost:8000/v1 --limit 0 --output gpqa_full.json
 
+# 受控 A/B：固定并发，避免自动探测结果成为混杂变量
+python3 fast_gpqa.py --model-name Qwen3-8B --api-base http://localhost:8000/v1 --eval-batch-size 16 --output gpqa_b16.json
+
+# 已知慢速 thinking 模型重试：使用已验证的并发，跳过耗时的单题截断探测
+python3 fast_gpqa.py --model-name Light-R1-7B-DS --api-base http://localhost:8000/v1 --dataset math_500 --limit 10 --eval-batch-size 4 --skip-truncation-check --output math50.json
+
 # MMLU（默认 1140 题，不传 --limit）
 python3 fast_gpqa.py --model-name Qwen3-8B --api-base http://localhost:8000/v1 --dataset mmlu --output mmlu.json
 
@@ -117,6 +123,8 @@ python3 fast_gpqa.py --config fast_gpqa_config.yaml --output result.json
 | `--api-key` | 默认 `EMPTY` |
 | `--dataset` | 数据集，可多个（空格或逗号分隔） |
 | `--limit` | 题数；不传=数据集默认，`0`=全量；mmlu/math_500/mm_star 为每子集题数 |
+| `--eval-batch-size` | 固定评测并发数并跳过自动并发探测，用于受控 A/B 或已知慢速模型 |
+| `--skip-truncation-check` | 跳过评测前的单题截断探测；仅在 max_tokens 已验证时使用，JSON 会记录该操作 |
 | `--dataset-dir` | 数据集缓存目录（预下载后离线用） |
 | `--output` | 结果 JSON 路径；多数据集时为目录 |
 
@@ -127,15 +135,20 @@ python3 fast_gpqa.py --config fast_gpqa_config.yaml --output result.json
   "model": "Qwen3-8B",
   "benchmark": "gpqa_diamond",
   "score": 62.5,
+  "evalscope_score": 60.5,
   "total_questions": 50,
   "truncation_detected": false,
   "eval_duration_seconds": 312.5,
-  "runaway_detection": {"runaway_count": 0, ...}
+  "runaway_detection": {"runaway_count": 0, ...},
+  "answer_extraction_audit": {"parser_false_negative_count": 1, ...}
 }
 ```
 
-- **`score`**：正确率百分比（0–100），即精度数据。
+- **`score`**：最终正确率百分比（0–100）。GPQA 优先采用显式 `ANSWER: A/B/C/D` 标记复核后的分数。
+- `evalscope_score`：EvalScope 原始分；与 `score` 不同时，说明存在答案格式误解析。
+- `answer_extraction_audit`：GPQA 逐题提取审计，包含误扣题数、误解析题号和校正选项。
 - `truncation_detected: true` 表示有输出被 max_tokens 截断，分数可能偏低。
+- `truncation_check_skipped: true` 表示本轮由命令行显式跳过了评测前截断探测。
 - `runaway_detection.runaway_count > 0` 表示检测到复读死循环，该轮分数可能被污染。
 
 **退出码**：`0` = 所有数据集成功出分；`1` = 有数据集失败。

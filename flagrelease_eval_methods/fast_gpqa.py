@@ -27,6 +27,7 @@ GPQA Diamond 快速精度评测脚本
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -64,7 +65,16 @@ except ImportError:
 # Thinking 模型检测
 # =============================================================================
 
-THINKING_PATTERNS = ['qwen3', 'qwq', 'deepseek-r1', 'deepseek-r2', 'mimo', 'hunyuan']
+THINKING_PATTERNS = [
+    'qwen3',
+    'qwq',
+    'deepseek-r1',
+    'deepseek-r2',
+    'light-r1',
+    'minicpm4.1',
+    'mimo',
+    'hunyuan',
+]
 
 # thinking 模型 max_tokens 上限。正常思考链输出一般几千~一万多 token 封顶，
 # 真正会吃满上限的几乎必然是 runaway 复读死循环（Qwen3-30B 事故: 24576 token
@@ -351,6 +361,37 @@ def _zlib_compress_ratio(text: str) -> float:
     return len(zlib.compress(raw, level=6)) / len(raw)
 
 
+def _message_content_to_text(content) -> str:
+    """将 OpenAI message 的字符串或多模态 content 列表统一成文本。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                value = item.get("text")
+                if value is None:
+                    value = item.get("reasoning")
+                if value is None:
+                    value = item.get("reasoning_content")
+                if value is None:
+                    value = item.get("content", "")
+                parts.append(_message_content_to_text(value))
+        return "".join(parts)
+    if isinstance(content, dict):
+        value = content.get("text")
+        if value is None:
+            value = content.get("reasoning")
+        if value is None:
+            value = content.get("reasoning_content")
+        if value is None:
+            value = content.get("content", "")
+        return _message_content_to_text(value)
+    return ""
+
+
 def detect_runaway(text: str, finish_reason: str = "") -> Tuple[bool, Dict]:
     """判别回答是否为 runaway（垃圾复读死循环）。
 
@@ -451,7 +492,9 @@ def analyze_predictions_runaway(work_dir: str, model_id: str, dataset: str = 'gp
                     choices = (rec.get("model_output") or {}).get("choices") or []
                     if not choices:
                         continue
-                    content = (choices[0].get("message") or {}).get("content") or ""
+                    content = _message_content_to_text(
+                        (choices[0].get("message") or {}).get("content")
+                    )
                     stop_reason = choices[0].get("stop_reason") or ""
                     is_ra, ev = detect_runaway(content, stop_reason)
                     if is_ra:
@@ -465,6 +508,115 @@ def analyze_predictions_runaway(work_dir: str, model_id: str, dataset: str = 'gp
                         })
         except OSError:
             pass
+    return result
+
+
+def _extract_explicit_mcq_answer(text: str) -> Optional[str]:
+    """从模型明确的 Answer 标记中提取选项字母。
+
+    EvalScope 1.6.1 会将 ``**Answer:** C) ...`` 误提取为后续单词的
+    字母。这里只识别显式 Answer 标记，避免从推理正文中猜测答案。
+    """
+    normalized = (text or "").replace("*", "").replace("_", "")
+    patterns = (
+        r"(?im)^\s*[-+>]?\s*(?:final\s+)?answer\s*:\s*(?:is\s+)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+        r"(?im)^\s*[-+>]?\s*(?:the\s+)?(?:correct\s+)?answer\s+is\s+[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+    )
+    matches = []
+    for pattern in patterns:
+        matches.extend(re.findall(pattern, normalized))
+    return matches[-1].upper() if matches else None
+
+
+def analyze_mcq_answer_extraction(
+    work_dir: str,
+    model_id: str,
+    dataset: str = 'gpqa_diamond',
+) -> Dict:
+    """审计 GPQA 的选项提取，并计算格式校正分。
+
+    显式 Answer 标记优先；没有标记时仅回退到 EvalScope 已提取的
+    A/B/C/D。详细保留误解析题号，便于区分模型错答和评测器错判。
+    """
+    result = {
+        "checked": 0,
+        "explicit_answer_found": 0,
+        "fallback_to_evalscope": 0,
+        "format_corrected_score": None,
+        "parser_mismatch_count": 0,
+        "parser_false_negative_count": 0,
+        "parser_false_positive_count": 0,
+        "invalid_evalscope_extract_count": 0,
+        "mismatches": [],
+    }
+    if dataset != 'gpqa_diamond':
+        return result
+
+    review_dir = os.path.join(work_dir, "reviews", model_id)
+    review_paths = sorted(
+        os.path.join(review_dir, name)
+        for name in os.listdir(review_dir)
+        if name.endswith('.jsonl')
+    ) if os.path.isdir(review_dir) else []
+    corrected = 0
+
+    for review_path in review_paths:
+        try:
+            with open(review_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    sample = (rec.get("sample_score") or {}).get("score") or {}
+                    target = str(rec.get("target") or "").strip().upper()
+                    if target not in {"A", "B", "C", "D"}:
+                        continue
+                    prediction_text = str(sample.get("prediction") or "")
+                    evalscope_prediction = str(
+                        sample.get("extracted_prediction") or ""
+                    ).strip().upper()
+                    explicit_prediction = _extract_explicit_mcq_answer(prediction_text)
+                    if explicit_prediction:
+                        corrected_prediction = explicit_prediction
+                        result["explicit_answer_found"] += 1
+                    elif evalscope_prediction in {"A", "B", "C", "D"}:
+                        corrected_prediction = evalscope_prediction
+                        result["fallback_to_evalscope"] += 1
+                    else:
+                        corrected_prediction = None
+
+                    official_acc = float(
+                        ((sample.get("value") or {}).get("acc") or 0.0)
+                    )
+                    corrected_acc = corrected_prediction == target
+                    corrected += int(corrected_acc)
+                    result["checked"] += 1
+
+                    if evalscope_prediction not in {"A", "B", "C", "D"}:
+                        result["invalid_evalscope_extract_count"] += 1
+                    if (explicit_prediction and
+                            explicit_prediction != evalscope_prediction):
+                        result["parser_mismatch_count"] += 1
+                        result["mismatches"].append({
+                            "index": rec.get("index"),
+                            "target": target,
+                            "evalscope_prediction": evalscope_prediction or None,
+                            "explicit_prediction": explicit_prediction,
+                            "official_correct": bool(official_acc),
+                            "corrected_correct": corrected_acc,
+                        })
+                    if corrected_acc and not official_acc:
+                        result["parser_false_negative_count"] += 1
+                    if official_acc and not corrected_acc:
+                        result["parser_false_positive_count"] += 1
+        except OSError:
+            continue
+
+    if result["checked"]:
+        result["format_corrected_score"] = round(
+            corrected * 100.0 / result["checked"], 2
+        )
     return result
 
 
@@ -882,6 +1034,9 @@ def run_fast_gpqa(
     dataset: str = 'gpqa_diamond',
     limit: Optional[int] = None,
     output_path: Optional[str] = None,
+    eval_batch_size: Optional[int] = None,
+    skip_truncation_check: bool = False,
+    max_tokens_override: Optional[int] = None,
 ) -> Dict:
     """
     快速精度评测主流程（GPQA Diamond / MMLU / MATH-500）。
@@ -917,11 +1072,17 @@ def run_fast_gpqa(
     # Step 2: 自动设 max_tokens（基于 max_model_len 动态计算；多模态放大 prompt 预留）
     max_tokens, max_model_len = auto_max_tokens(api_base, api_key, model_name, is_thinking,
                                                 is_multimodal=is_multimodal)
+    if max_tokens_override is not None:
+        if max_tokens_override < 1:
+            raise ValueError("max_tokens must be >= 1")
+        max_tokens = max_tokens_override
+        print(f"  max_tokens: {max_tokens} (命令行显式指定)")
     if max_model_len:
         print(f"  max_model_len: {max_model_len} (从服务端获取)")
     else:
         print(f"  max_model_len: 未知 (使用 fallback)")
-    print(f"  max_tokens: {max_tokens}")
+    if max_tokens_override is None:
+        print(f"  max_tokens: {max_tokens}")
 
     # Step 3: 截断检测 — 发样题检查 finish_reason
     # thinking 模型翻倍重试受 THINKING_MAX_TOKENS_CAP 约束（防线1）
@@ -932,10 +1093,17 @@ def run_fast_gpqa(
         trunc_cap = THINKING_MAX_TOKENS_CAP
     else:
         trunc_cap = None
-    truncation_detected, max_tokens = check_truncation(
-        api_base, api_key, model_name, max_tokens, max_model_len,
-        max_tokens_cap=trunc_cap,
-    )
+    if skip_truncation_check or max_tokens_override is not None:
+        truncation_detected = None
+        if max_tokens_override is not None and not skip_truncation_check:
+            print("[CHECK] 显式指定 max_tokens，跳过会改写上限的截断探测")
+        else:
+            print("[CHECK] 跳过截断探测（由命令行显式指定）")
+    else:
+        truncation_detected, max_tokens = check_truncation(
+            api_base, api_key, model_name, max_tokens, max_model_len,
+            max_tokens_cap=trunc_cap,
+        )
 
     # Step 4: 构建 generation_config（优先采用模型自带 generation_config.json 的采样参数，
     # 读取失败/缺失时无声回退现有默认；纯增强层，绝不新增评测报错点）
@@ -953,15 +1121,22 @@ def run_fast_gpqa(
         evalscope_config['dataset_dir'] = dataset_dir
 
     # Step 6: 探测吞吐，选并发
-    batch_size, probe_time = probe_throughput(
-        model_name=model_name,
-        api_url=api_base,
-        api_key=api_key,
-        generation_config=gen_config,
-        dataset_args=dataset_args,
-        evalscope_config=evalscope_config,
-        is_multimodal=is_multimodal,
-    )
+    if eval_batch_size is not None:
+        if eval_batch_size < 1:
+            raise ValueError("eval_batch_size must be >= 1")
+        batch_size = eval_batch_size
+        probe_time = 0.0
+        print(f"[PROBE] 使用固定并发: {batch_size}（跳过自动探测）")
+    else:
+        batch_size, probe_time = probe_throughput(
+            model_name=model_name,
+            api_url=api_base,
+            api_key=api_key,
+            generation_config=gen_config,
+            dataset_args=dataset_args,
+            evalscope_config=evalscope_config,
+            is_multimodal=is_multimodal,
+        )
 
     # Step 7: 正式评测
     print("-" * 60)
@@ -1057,6 +1232,26 @@ def run_fast_gpqa(
               f"{[r['index'] for r in runaway_analysis['runaway_indices']]}")
         print(f"[WARN] 这些题的截断垃圾可能污染分数，建议关注精度结果可信度")
 
+    # Step 8.6: GPQA 答案格式审计。EvalScope 1.6.1 对部分 Markdown
+    # Answer 格式会误提取，同时保留原始分和校正分便于对照。
+    evalscope_score = score
+    answer_extraction = analyze_mcq_answer_extraction(
+        work_dir, model_id, dataset=dataset
+    )
+    corrected_score = answer_extraction.get("format_corrected_score")
+    if corrected_score is not None:
+        score = corrected_score
+        mismatch_count = answer_extraction.get("parser_mismatch_count", 0)
+        false_negative_count = answer_extraction.get(
+            "parser_false_negative_count", 0
+        )
+        if mismatch_count:
+            print(
+                f"[AUDIT] GPQA 答案提取差异 {mismatch_count} 题，"
+                f"其中误扣 {false_negative_count} 题；"
+                f"EvalScope={evalscope_score:.2f}%，格式校正={score:.2f}%"
+            )
+
     # Step 9: 输出报告
     report = {
         '_producer': 'fast_gpqa.py',
@@ -1064,11 +1259,14 @@ def run_fast_gpqa(
         'benchmark': dataset,
         'mode': mode_str,
         'score': score,
+        'evalscope_score': evalscope_score,
         'total_questions': total_questions,
         'eval_batch_size': batch_size,
         'max_tokens': max_tokens,
         'max_model_len': max_model_len,
         'truncation_detected': truncation_detected,
+        'truncation_check_skipped': skip_truncation_check or max_tokens_override is not None,
+        'max_tokens_overridden': max_tokens_override is not None,
         'temperature': gen_config['temperature'],
         'probe_time_seconds': probe_time,
         'eval_duration_seconds': round(total_elapsed - probe_time, 2),
@@ -1076,6 +1274,7 @@ def run_fast_gpqa(
         'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
         'work_dir': work_dir,
         'runaway_detection': runaway_analysis,
+        'answer_extraction_audit': answer_extraction,
     }
     if monitor and monitor.is_dead():
         reason = monitor.death_reason()
@@ -1085,18 +1284,22 @@ def run_fast_gpqa(
             'model': '模型名称或路径',
             'benchmark': '评测基准名称（gpqa_diamond / mmlu / math_500 / mm_star[多模态]）',
             'mode': '评测模式: standard（普通模型）/ thinking（思维链模型）',
-            'score': f'{cfg["benchmark_name"]} 正确率百分比',
+            'score': f'{cfg["benchmark_name"]} 最终正确率百分比（GPQA 为显式 Answer 标记校正分）',
+            'evalscope_score': 'EvalScope 原始判分，用于识别版本间答案提取差异',
             'total_questions': f'实际评测题数（evalscope 报告为准；mmlu/math_500 为 per-subset：mmlu --limit 100 = 5700 题（57 子集×100）、math_500 --limit 10 = 50 题（5 子集×10），--limit 0 为全量 {cfg["full_count"]} 题）',
             'eval_batch_size': '评测并发数（自动探测选择）',
             'max_tokens': '单次生成最大 token 数',
             'max_model_len': '模型支持的最大上下文长度',
             'truncation_detected': '是否检测到输出被截断（true 时分数可能偏低）',
+            'truncation_check_skipped': '是否由命令行显式跳过截断探测',
+            'max_tokens_overridden': '是否由命令行显式指定 max_tokens',
             'temperature': '采样温度（0.0=贪心解码）',
             'probe_time_seconds': '并发探测阶段耗时（秒）',
             'eval_duration_seconds': '实际评测阶段耗时（秒）',
             'total_duration_seconds': '总耗时（含探测，秒）',
             'work_dir': 'evalscope 原始输出目录（含预测、报告、日志）',
             'runaway_detection': '防线2 复读检测：评测完成后扫描逐题回答，标记 runaway 复读题（checked/runaway_count/runaway_indices）；runaway_count>0 说明该轮分数可能被复读污染',
+            'answer_extraction_audit': 'GPQA 逐题 Answer 字母复核：记录 EvalScope 误解析及误扣题号',
     }
 
     # 写 JSON 报告
@@ -1169,6 +1372,12 @@ def main():
                              f'（默认 gpqa_diamond，可被 config 覆盖；多数据集时 --output 视为目录，每数据集写 {{dataset}}_result.json）')
     parser.add_argument('--limit', type=int, default=None,
                         help='限制评测题数（None=数据集默认，0=全量；mmlu/math_500 为每子集题数，如 mmlu 100=57子集各100题、math_500 10=5子集各10题）')
+    parser.add_argument('--eval-batch-size', type=int, default=None,
+                        help='固定评测并发数，指定后跳过自动并发探测（用于受控 A/B）')
+    parser.add_argument('--skip-truncation-check', action='store_true',
+                        help='跳过评测前单题截断探测（已知慢速 thinking 模型重试时使用）')
+    parser.add_argument('--max-tokens', type=int, default=None,
+                        help='显式指定单次生成最大 token 数；指定后跳过会改写该上限的截断探测')
     parser.add_argument('--output', type=str, default=None,
                         help='结果 JSON 输出路径（如 /flagos-workspace/results/gpqa_native.json）')
     args = parser.parse_args()
@@ -1194,6 +1403,8 @@ def main():
 
     # 数据集解析：--dataset 支持空格/逗号多值，config dataset 支持逗号分隔，均可被 --dataset 覆盖
     def _split_datasets(raw):
+        if raw is None:
+            return []
         parts = raw if isinstance(raw, list) else [raw]
         return [p.strip() for part in parts for p in str(part).split(',') if p.strip()]
 
@@ -1276,6 +1487,9 @@ def main():
                 dataset=dataset,
                 limit=args.limit,
                 output_path=output_path,
+                eval_batch_size=args.eval_batch_size,
+                skip_truncation_check=args.skip_truncation_check,
+                max_tokens_override=args.max_tokens,
             )
             reports.append((dataset, report))
 

@@ -51,10 +51,30 @@
   **处置**：上报 plugin-FL 框架级 bug，附两份结果 JSON（NV 基线 vs 本平台 V1）；短期内该模型无法通过。
   **来源**：hygon/sarvam-m（报告明确写"Plugin 精度框架级退化，全关算子仍不达标"）
 
+- **现象**：sarvam-m 在新 Hygon 镜像上服务可用，但 GPQA 50 题只有 32%，且 9/50 题出现高重复并达到 `max_tokens`。
+  **根因**：本轮只能确认结果受到长输出/复读污染；不能仅凭这一轮把原因归因到某个算子。历史报告还提示该模型存在 plugin-FL 框架级精度退化。
+  **处置**：保留 `score` 与 `evalscope_score`，做逐题输出审计；后续按 `FlagGems 开/关 × OOT 开/关` 2×2 重复实验，并固定并发、生成上限和缓存状态。2026-09-15 的 50 题结果为 32%；2026-09-16 全量 198 题结果为 29.80%，NV 基线 48.00%，相对退化 37.92%，且 40/198 题 runaway，不达标。
+  **来源**：hygon/sarvam-m，2026-09-15/16 新镜像实测
+
 - **现象**：开启算子替换后精度退化 > 5%，关掉后恢复。
   **根因**：某个或某几个替换算子的数值精度不足。
   **处置**：二分法缩小白名单——每次去掉一半算子，重新评测，定位退化算子；找到后关掉该算子并提 issue。
   **来源**：hygon 多个模型（Magistral-Small、Mistral-Small-24B、Phi-3-medium、SOLAR 等）
+
+- **现象**：Mistral 类非 thinking 模型 50 题从 NV 54% 掉到 40%，无解析误扣，关闭全部 FlagGems 也不能恢复；修复后单轮可到 52%，但同参数复跑掉到 48%。
+  **根因**：本例是两个因素叠加：① prefix cache / chunked prefill 对 Hygon 当前 vLLM/plugin-FL 组合有精度污染；②评测脚本只拿到 served model name，没拿到容器内模型目录时读不到 `generation_config.json`，错误退回 `temperature=0.0`，而模型配置要求 `temperature=0.15`。
+  **处置**：服务侧加 `--no-enable-prefix-caching --no-enable-chunked-prefill`；评测侧写 `/flagos-workspace/shared/context.yaml` 指向模型目录，确保采样参数来自模型 `generation_config.json`。本例从 40% -> 46% -> 52%，但复跑为 48%；50 题采样口径不能只看单轮达标，需跑全量 198 题或固定 seed/确定性口径确认稳定性。
+  **来源**：hygon/Mistral-Small-24B-Instruct-2501，2026-09-17 新镜像实测
+
+- **现象**：Qwen2.5-7B-Instruct 在 Hygon 新镜像 GPQA 50 题从 NV 39% 掉到 26%；改生成上限后仍只有 32% 左右。
+  **根因**：服务用 `--dtype float16` 跑了模型配置声明的 `bfloat16` 权重，同时 broad FlagGems 替换会引入额外数值扰动；把核心算子强制走 `reference` 反而崩到 8%，说明不能简单回退所有核心 op。
+  **处置**：服务侧改 `--dtype bfloat16`，保留默认 prefix/chunk；将 `VLLM_FL_FLAGOS_WHITELIST` 和 `VLLM_FL_OOT_WHITELIST` 收敛到 `silu_and_mul,rms_norm,rotary_embedding`。本例 50 题从 26% -> 36%，NV=39%，绝对差 1.5 题，按小样本噪声容忍判达标；`--no-enable-prefix-caching --no-enable-chunked-prefill` 会降到 32%，不要套用。
+  **来源**：hygon/Qwen2.5-7B-Instruct，2026-09-17/18 新镜像实测
+
+- **现象**：Magistral-Small-2506 按普通模型贪心评测只有 48%（服务侧优化后 54%），低于 NV 62%；输出中有 7/50 题高重复并撞 `max_tokens`。
+  **根因**：这是 reasoning 模型，但脚本按 served model name 未识别为 thinking，退回 `temperature=0.0` 贪心；模型 README 推荐 `temperature=0.7/top_p=0.95`。同时 Hygon 当前服务需要关 prefix cache / chunked prefill，并避免核心 Mistral op 走有问题的 FlagGems 路径。
+  **处置**：服务侧使用 `--no-enable-prefix-caching --no-enable-chunked-prefill`，FlagGems 白名单保留非核心 26 项，让 `silu_and_mul/rms_norm/rotary_embedding` 走 reference；评测侧按 thinking 跑 GPQA，固定 `max_tokens=4096, temperature=0.7, top_p=0.95, eval_batch_size=4`。本例 50 题 62%，NV=62%，runaway=0，达标；普通贪心口径仍会误判失败。
+  **来源**：hygon/Magistral-Small-2506，2026-09-17/18 新镜像实测
 
 - **现象**：精度偏差在 4–5% 附近，勉强超阈值（如 metax/Phi-3-mini 偏差 4.0%）。
   **根因**：边界情况，可能与评测题数（50 题）的随机抖动有关。
@@ -88,11 +108,23 @@
   **处置**：①检查 serve 日志是否有 OOM / CUDA error；②用 `--limit 20` 先跑小样本确认稳定性；③稳定后再跑全量；④若依然中断，降 `--gpu-memory-utilization` 或 TP 调整。
   **来源**：iluvatar/OpenThinker-7B
 
+- **现象**：Hygon vLLM 服务评测中途 `EngineCore` 退出，端口拒绝连接，日志有 `sqlite3.OperationalError: database is locked`，栈在 FlagGems autotune cache。
+  **根因**：多 TP worker 共用同一个 SQLite autotune DB，反射/写入 benchmark 表时互相锁住。
+  **处置**：服务启动环境里设置 `FLAGGEMS_DB_URL=sqlite:///:memory:`，或为各 rank 配独立 DB/cache；重启后再跑全量。保留 `VLLM_FL_TRITON_CACHE_ROOT` 仅作 kernel cache，不等同于 FlagGems DB 隔离。
+  **来源**：hygon/sarvam-m，2026-09-16 全量评测首轮 53/198 崩溃
+
+- **现象**：`.running` 标记还在，但评测日志不再更新，评测进程消失；Docker events 显示评测容器 `kill/die 137/destroy`，模型服务仍健康。
+  **根因**：评测跑在临时下载/工具容器里，容器被外部清理或 kill，遗留 stale running 标记。
+  **处置**：不要只看 `.running`；同时看 `ps`、日志 `mtime`、Docker events 和服务 health。长时间全量评测优先挂在模型长驻容器或稳定评测容器里，结果写共享盘。
+  **来源**：hygon/sarvam-m，2026-09-16 r2 在 24/198 后退出码 137
+
 ---
 
 ## 六、评测注意事项（避免踩坑）
 
 - thinking 模型（QwQ / DeepSeek-R1 / Qwen3 系列）单题输出数千 token，50 题 GPQA 可能跑 6 小时以上，**不要中断**，这是正常现象。
+- 模型名没有命中 `THINKING_PATTERNS` 不代表它不是 reasoning 模型；Magistral 这类模型必须按 README/模型卡确认采样口径，必要时通过 `context.yaml` 标记 `thinking_model` 或临时 monkeypatch，否则会被 `temperature=0.0` 贪心误评。
+- 普通模型也可能输出长推理；自动按 `max_model_len` 推导出的 24576 `max_tokens` 会把 GPQA 单轮耗时放大到小时级。慢速芯片上应按任务协议显式固定 `--max-tokens`，并同时检查 `truncation_detected`、`runaway_detection`，不能只看最终分数。
 - 两次对比评测**必须用完全相同的参数**，否则结果不可比。
 - 评测期间**不要同时跑性能测试**，两者抢 GPU 会污染精度。
 - `truncation_detected: true` 说明输出被 max_tokens 截断，分数偏低不可信；需加大 `--max-model-len` 后重跑。

@@ -38,6 +38,7 @@
 3. **评测期间禁止同时跑性能测试**——抢 GPU 会污染精度结果。
 4. **thinking 模型**（qwq / deepseek-r1 / qwen3 等）脚本自动识别并放宽 max_tokens 到 20000；50 题可能跑 6 小时以上，属预算内，勿中断。
 5. 结果 JSON 里 `truncation_detected` / `runaway_detection.runaway_count` 为红旗字段，非零时分数不可信，需回查服务。
+6. **NV 可比性门禁**：`nv_baseline.yaml` 只记录分数时，不能据此证明样本量、数据集版本、split、few-shot、seed、prompt、EvalScope 版本和生成参数一致。找不到 NV 原始结果或配置时，只能标记为“参考比较”，不能下“严格精度达标”结论；必要时在 NV 环境按同一条命令重测。
 
 ## 与失败报告的对应
 
