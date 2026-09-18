@@ -115,7 +115,8 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
-| 第1次 | | | | |
+| 第1次 | sort,sort_stable | 58.0%（50题） | 1（↓9.38%） | TP=4，TRITON_ATTN，port 8001；1 轮 runaway（iter1 记录） |
+| 第2次 | sort,sort_stable,**mm,addmm** | **58.0%**（50题） | 1（↓9.38%） | **与 iter1 完全相同**；6 条 runaway；耗时 184m47s |
 
 ## 现象
 
@@ -125,28 +126,149 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
   - fast_gpqa.py 因 thinking 模型 list content 触发 detect_runaway AttributeError 崩溃，score 字段未写出。
   - 从 evalscope 报告 `outputs/gpqa_diamond/20260917_075834/reports/TinyR1-32B-Preview/gpqa_diamond.json` 恢复：`score=0.58` → **58.0%**，50题全部 succeeded。
   - 性能数据：mean TTFT=6378ms，avg_output_tps=4.98 tok/s（32B TP=4，思维链模型，平均输出 11250 tokens/题，属正常区间）。
+- iter2（追加 `mm,addmm`，其余不变，GPUs 3,4,7,8，TP=4，port 8001）：
+  - 评测于 2026-09-18 跑完，耗时 184m47s（11087s）。
+  - `fast_gpqa` 同样写出 `score=null`；从 evalscope 报告 `outputs/gpqa_diamond/20260918_055922` 恢复 `score=0.58` → **58.0%**，50 题。
+  - **与 iter1 分数完全相同**，`mm,addmm` 黑名单对该模型无效。
+  - 输出长度：中位 7193 / 均值 11003 / 最大 32768 tokens，**8 题撞 32768 上限**。
+  - runaway **6/50**（index 37、44、45、46、47、48，全部 `finish_reason=max_tokens`）。
 
 ## 定位
 
 - vLLM 0.24.0 解决了原服务启动失败问题，服务正常起来。
 - sort,sort_stable 基础黑名单下精度 58.0%，NV 基线 64.0%，相对退化 9.38%，超出 5% 容差。
-- 差距约 3 题，可考虑扩大黑名单进一步排查。
+- **iter2 证明 `mm,addmm` 黑名单路线无效**——两轮分数一位小数都没动（58.0% = 58.0%），
+  与 NeuralDaredevil-8B 的教训一致（`mm`/`addmm` 对这类模型不可黑名单化）。
+- 真实原因指向**采样配置**，见下方专项调查。
 
 ## 处置
 
-iter1 不达标（58.0% vs 64.0%，↓9.38%）。下一步选项：
-1. 扩大黑名单（追加 mm、bmm、addmm 等算子）重跑
-2. 视资源安排决定是否继续迭代
+iter1/iter2 均不达标（58.0% vs 64.0%）。黑名单路径已排查完毕（`sort,sort_stable` 必需；
+`mm,addmm` 无效）。**根因调查见下方「专项调查」章节**，待决策是否按复查结论重跑。
 
-当前结论：**结果记录，待资源安排决定是否继续**。
+当前结论：**结果记录，待决策**。
 
 ## 结果
 
-- 修复后 GPQA 正确率：**58.0%**（50题，从 evalscope 报告恢复）
+- 修复后 GPQA 正确率：**58.0%**（50题，iter1/iter2 相同；从 evalscope 报告恢复）
 - NV 基线：**64.0%**
 - 相对退化：↓9.38%（超 5% 容差）
-- 达标判定：**❌ 不达标**
+- 达标判定：**❌ 不达标**（两轮均不达标）
+
+---
+
+# 专项调查：TinyR1 的采样配置疑似错误（2026-09-18）
+
+> 本节为**复盘用**，记录一次尚未闭环的根因调查。结论尚未执行，供后续接手者快速进入状态。
+
+## 触发
+
+iter2 分数与 iter1 **完全相同**（58.0% = 58.0%），且复读题集中在连续 index（44–48），
+怀疑问题不在算子侧，转而检查采样配置。
+
+## 发现一：TinyR1 没有 `generation_config.json`
+
+同批次模型目录对比：
+
+| 模型 | `generation_config.json` 中的 temperature |
+|------|:---:|
+| QwQ-32B | 0.6 |
+| Qwen3-30B-A3B-Thinking-2507 | 0.6 |
+| OpenThinker-7B | 0.7 |
+| Marco-o1 | 0.7 |
+| **TinyR1-32B-Preview** | **（文件不存在）** |
+| Phi-4-mini-reasoning | 有文件，但只有 `_from_model_config` + token ids，无 temperature |
+| Qwen3.5-27B-Distilled | （文件不存在） |
+
+## 发现二：它是 thinking 模型，但被按 standard 评测
+
+三条独立证据证明 TinyR1 是推理模型：
+
+1. **README 原文**（`TinyR1_32B_Preview.pdf` 同目录的 `README.md` 第 24 行）：
+   *"We introduce our first-generation **reasoning** model, Tiny-R1-32B-Preview"*
+2. **chat_template 主动注入 `<think>`**：
+   `{% if add_generation_prompt and not ns.is_tool %}{{'<｜Assistant｜><think>\n'}}{% endif %}`
+   —— 模板替模型开启思考块，这是 thinking 模型的标志性写法。
+3. **chat_template 会剥离 `</think>`**：`{% if '</think>' in content %}{% set content = content.split('</think>')[-1] %}`
+
+**README 第 112 行明确给出采样建议，且警告了后果：**
+
+> "Incorrect parameter configurations may result in **repetitive output loops**, similar to R1.
+> We recommend setting the **temperature to 0.6 and top-p to 0.95**, in line with R1's configuration."
+
+**但 `fast_gpqa.detect_thinking("TinyR1-32B-Preview")` 返回 `False`：**
+
+```python
+THINKING_PATTERNS = ['qwen3', 'qwq', 'deepseek-r1', 'deepseek-r2', 'mimo', 'hunyuan']
+```
+
+模式表匹配的是完整子串 `"deepseek-r1"`，而 `"tinyr1"` **不含**它（`tinyr1` vs `deepseek-r1`）。
+于是走 standard 分支，得到 **`temperature=0.0`（贪心）+ `top_p=1.0`** ——
+**正是 README 警告会引发复读的那个配置。**
+
+## 发现三：读 generation_config 的机制在本环境下失效
+
+`fast_gpqa.resolve_gen_params()` 设计上会读模型目录的 `generation_config.json` 覆盖采样参数，
+但 `_resolve_model_dir()` 只有两条获取路径，**在本环境下两条都不通**：
+
+| 路径 | 代码 | 实际情况 |
+|------|------|---------|
+| 1. `model_path` 本身是目录 | `if model_path and _os.path.isdir(model_path)` | 实际传的是模型**名**（`TinyR1-32B-Preview`），不是路径 ❌ |
+| 2. 读 `/flagos-workspace/shared/context.yaml` | `ctx["model"]["local_path"]` | **该文件不存在** ❌ |
+
+**反例验证**（决定性）：OpenThinker-7B 的 `generation_config.json` 写着 `temperature: 0.7`，
+但其评测日志记录的是——
+
+```
+模式: standard (temperature=0.0, max_tokens=24576)
+```
+
+Marco-o1 同样（配置 0.7，实际 0.0）。**证明该覆盖机制对所有模型都未生效**，
+TinyR1 即便补上 `generation_config.json` 也不会被读取。
+
+> ⚠️ **影响范围不止 TinyR1**：OpenThinker-7B、Marco-o1 同样被以 0.0 评测（应为 0.7）。
+> 二者目前"达标"（一个在容差内、一个走噪声容忍），但属侥幸，其达标结论同样建立在不匹配的采样上。
+
+## 发现四：后果与证据吻合
+
+逐题核对 iter2 的判定（数据源 `outputs/gpqa_diamond/20260918_055922/reviews/`，
+字段 `sample_score.score.value.accuracy`）：
+
+```
+全部          : 29/50 = 58.0%
+复读 6 题     : 1/6 正确   (index 37 对；44,45,46,47,48 全错)
+排除复读后    : 28/44 = 63.6%    ← NV 基线 64.0%
+```
+
+**排除复读题后为 63.6%，基本等于 NV 基线 64.0%。** 即 6 个百分点的差距几乎全部由复读造成，
+而贪心解码正是 README 指出的复读诱因。**TinyR1 的真实能力可能本就达标。**
+
+## 待决策的修复方案
+
+| 方案 | 做法 | 代价 |
+|------|------|------|
+| **A. 建 `context.yaml`** | 写 `/flagos-workspace/shared/context.yaml`，含 `model.container_path` + `thinking_model: true` | 用 harness 自带机制；但会**同时改变所有模型**的采样（OpenThinker/Marco-o1 的 0.0→0.7），破坏与已有结果的可比性 |
+| **B. 显式指定（推荐）** | 仿 `force_conc.py` 写 wrapper，覆盖 `resolve_gen_params` 返回 `temperature=0.6, top_p=0.95` | 只影响 TinyR1；属绕过脚本 |
+| **C. 不动** | 接受 58.0%，记为不达标 | 但这等于拿贪心解码分数比 NV 的采样解码基线，**口径不对等** |
+
+**建议 B**：只改 TinyR1、采用官方推荐参数、不污染其他模型。
+
+**重跑前还应做**：抓 index 44–48 的原始输出，确认是纯复读而非其他退化模式。
+
+## 本轮未做的事（接手者注意）
+
+- ❌ 未生成 verdict（`score=null` 解析 bug，需从报告重建后跑 `accuracy_compare`）
+- ❌ 未执行上述任何修复方案
+- ❌ 未抓复读题原文
 
 ## 提炼到 KNOWLEDGE 的条目
 
-TinyR1-32B-Preview（Qwen2.5-32B GQA 架构，TP=4）在 vLLM 0.24.0 + sort,sort_stable 黑名单 + TRITON_ATTN 下服务可正常起来，GPQA 58.0% vs NV 64.0%（↓9.38%），仍不达标；原报告服务启动失败已由新镜像修复。
+1. **`detect_thinking()` 靠模型名子串匹配**（`qwen3/qwq/deepseek-r1/deepseek-r2/mimo/hunyuan`），
+   名字不含这些关键词的推理模型（`TinyR1-32B-Preview`、`Phi-4-mini-reasoning`、
+   `OpenReasoning-Nemotron-1.5B`）会被判成 standard，拿到 `temperature=0.0` 贪心解码。
+   对 R1 系蒸馏模型，贪心解码会显著加剧复读（模型方 README 已警告）。
+2. **`resolve_gen_params()` 的 `generation_config.json` 覆盖机制在本环境失效**——
+   `_resolve_model_dir()` 依赖 `--model-name` 传路径或 `context.yaml`，二者都不满足。
+   已用 OpenThinker-7B / Marco-o1（配置 0.7、实际 0.0）反例验证。
+3. **判读推理模型分数前，先核对实际采样参数**：贪心解码下的低分可能是复读 artifact 而非真实退化。
+   扣掉 runaway 题后的分数（本例 58.0% → 63.6%）更能反映真实能力。
