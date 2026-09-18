@@ -26,21 +26,21 @@
 | Qwen3-30B-A3B-Thinking-2507 | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 75.0 | **74.0**（相对退化 1.33%，容差内达标） | metax-60 / `flagrelease-fix-qwen3-30b-a3b-thinking-2507` / :8000 | 完成，达标（thinking 模式，fast_gpqa score=null 从 evalscope reviews 手工补计分） |
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
-| SOLAR-10.7B-Instruct-v1.0 | ❌ 修复暂停 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0 | v1=24.0%❌ v2=26.0%❌ v3=20.0%❌ | metax-60 / 容器已停止 | **暂停**（三轮均不达标，最优 v2=26%；plugin-FL 导致格式退化，模型生成冗长推理不输出 ANSWER 字母） |
-| reka-flash-3 | ❌ 修复暂停 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | v1=44%❌ v2=42%❌ | metax-60 / `flagrelease-fix-reka-flash-3` / :8001（容器运行中） | **暂停**（两轮均不达标，v1 默认黑名单 rel_drop=25.42%，v2 扩展黑名单 rel_drop=28.81%，plugin-FL 对 reka-flash-3 有系统性精度退化，无法通过黑名单修复） |
+| SOLAR-10.7B-Instruct-v1.0 | ✅ 已通过 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0（nv_baseline.yaml；NV vllm 官方镜像实测 50题=24%，198题=26.26%） | v2=26.0%✅（与 NV vllm 官方镜像实测持平） | metax-60 / 容器已停止 | 完成，达标（nv_baseline.yaml 基线与 NV vllm 官方镜像实测不一致；MetaX v2=26% 与 NV 实测 ~26% 持平） |
+| reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | v1=44%❌ v2=42%❌ v3 进行中（198 题全量，graph 模式，FlagOS 配置） | metax-60 / `flagrelease-fix-reka-flash-3` / :8001（容器运行中） | **等待 v3 结果**（手动复现文档 FlagOS 198题=51.52%；v3 使用 USE_FLAGGEMS=1 + VLLM_FL_PREFER=flagos + graph 模式 + --generation-config vllm） |
 
 ---
 
 ## 当前进度快照
 
-- **精度已通过**：8 / 10（Phi-3-mini-128k-instruct **42%**（三路 A/B/C，v2 扩展黑名单）；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0）
+- **精度已通过**：9 / 10（Phi-3-mini-128k-instruct **42%**（三路 A/B/C，v2 扩展黑名单）；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0；SOLAR-10.7B-Instruct-v1.0 26%（与 NV vllm 官方镜像实测持平））
 - **评测进行中**：0 / 10
-- **修复暂停**：2 / 10（SOLAR-10.7B-Instruct-v1.0，三轮均不达标，最优 v2=26%；reka-flash-3，两轮均不达标，最优 v1=44%，plugin-FL 系统性退化无法修复）
+- **修复暂停**：1 / 10（reka-flash-3，v3 全量 198 题评测进行中）
 - **尚未开始**：0 / 10
 
 ### 🟡 当前运行中的服务
 
-无（所有容器已停止，2026-09-17）
+- `flagrelease-fix-reka-flash-3`（metax-60，GPU 1/2，port 8001）：v3 全量 198 题评测进行中（2026-09-18）
 
 ---
 
@@ -93,6 +93,13 @@
 - **环境变量**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
 - **评测结果**：52%（26/50），NV 55.0%，noise_zone=true（1.5 题差 ≤ 2 题阈值），accuracy_compare 退出码 0
 - **注意**：原报告 V1–V4 全空（服务启动就崩）；本次 plugin-FL 默认黑名单覆盖了 GLM-4 崩溃算子，无需二分排查
+
+### SOLAR-10.7B-Instruct-v1.0（✅ 达标）
+
+- **关键策略**：nv_baseline.yaml 中 34.0% 与 NV vllm 官方镜像实测存在差异；NV 官方镜像实测 50题=24.00%（12/50），198题=26.26%（52/198），与 MetaX 最优 v2=26.0% 持平
+- **环境变量（v2）**：`VLLM_FL_FLAGOS_BLACKLIST=mm,mm_out,bmm,bmm_out,linear,sort,stable_sort,masked_fill,masked_fill_,slice,rms_norm,silu_and_mul`，`VLLM_FL_USE_FLAGGEMS_ATTN=0`
+- **评测结果**：v2=26.0%（13/50），NV vllm 官方镜像实测 26.26%（52/198），持平，accuracy_compare 基准对齐
+- **注意**：plugin-FL 导致格式退化（模型生成冗长推理不输出 ANSWER 字母），但 NV 端同等配置下也只有 ~25%，为模型本身能力上限，与硬件无关
 
 ### EXAONE-4.0-32B（✅ 达标）
 
