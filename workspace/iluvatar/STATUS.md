@@ -30,14 +30,14 @@
 | Marco-o1 | ✅ 已通过 | 服务启动失败（Operator crash）+ 精度存疑（V2 GPQA=32.83%） | gpqa_diamond | 32.0 | **28.0**（差2题，噪声容忍达标） | `flagrelease-fix-marco-o1` / :8005 | 完成，达标（小样本噪声区，可扩样本复核） |
 | Ministral-8B-Instruct-2410 | ⏭️ 因失败跳过 | 精度不达标（V2/V3 GPQA=28.0% vs NV=30.0%，↓6.7%） | gpqa_diamond | 30.0 | — | — | **镜像 transformers+mistral_common 依赖链缺陷**：`is_vision_available()`=False → `is_mistral_common_available()`=False → mistral tokenizer 模块级 `SpecialTokens` NameError；非模型问题，待换镜像 |
 | MiroThinker-v1.5-30B | 🟡 评测进行中 | Operator crash + 全部评测数据为空 | gpqa_diamond | 25.0 | **18.0**（iter1，↓28.0%，差3.5题）；iter2 进行中 | `flagrelease-fix-mirothinker-v1.5-30b` GPU 4-7 / :8001 (u147) | iter1 退化显著；服务于 2026-09-18 12:01 重启（TRITON_ATTN，sort,sort_stable，TP=4），12:03 ready；iter2 GPQA eval 启动（pid 1282） |
-| NeuralDaredevil-8B-abliterated | ⏭️ 跳过 | 服务启动失败（Operator crash，原用 FlagGems 5.3.0rc2） | gpqa_diamond | 37.0 | **30.0**（↓18.9%） | `flagrelease-fix-neuraldaredevil-8b-abliterated` / :8006 | 服务已修好，但精度退化>5%；需算子级排查（50题小样本，可复评/扩样本确认） |
+| NeuralDaredevil-8B-abliterated | 🔧 修复中 | 服务启动失败（Operator crash，原用 FlagGems 5.3.0rc2） | gpqa_diamond | 37.0 | iter1: **30.0**（↓18.9%） | `flagrelease-fix-neuraldaredevil-8b-abliterated` GPU 1 / :8006 (u139) | iter2 启动中（sort,sort_stable,mm,addmm，TRITON_ATTN，TP=1） |
 | QwQ-32B | ⏭️ 因失败跳过 | 服务启动失败（流程仅 37min，全部数据为空） | gpqa_diamond | 63.0 | **56.0**（iter1，50题）| `flagrelease-fix-qwq-32b` 已停 (u147) | 数量已够，不需要修复；容器已停 |
-| TinyR1-32B-Preview | ❌ 精度不达标 | 服务启动失败（无镜像产出，全部数据为空） | gpqa_diamond | 64.0 | **58.0%**（50题，↓9.38%） | `flagrelease-fix-tinyr1-32b-preview` GPU 3,4,7,8 / :8001 (u139) | iter1：vLLM 0.24.0 修复了服务起不来的问题；TRITON_ATTN，TP=4；fast_gpqa detect_runaway bug crash，分数从 evalscope 报告 `outputs/gpqa_diamond/20260917_075834` 恢复；58.0% vs 64.0%，↓9.38%，不达标 |
+| TinyR1-32B-Preview | 🔧 修复中 | 服务启动失败（无镜像产出，全部数据为空） | gpqa_diamond | 64.0 | iter1: **58.0%**（50题，↓9.38%） | `flagrelease-fix-tinyr1-32b-preview` GPU 3,4,7,8 / :8001 (u139) | iter2 启动中（sort,sort_stable,mm,addmm，TRITON_ATTN，TP=4） |
 | Phi-3-medium-128k-instruct | ⏭️ 跳过 | 服务启动失败（原 vLLM 0.20.2 Operator crash，全部数据为空） | gpqa_diamond | 37.0 | **24.0**（↓35.14%，差13题） | `flagrelease-fix-phi3-medium` GPU 0 / :8009 (u139) | iter3（17算子黑名单，含 LayerNorm+GEGLU）得分仍 24.0%，算子黑名单路径彻底排查完毕；下一步：排查 chat_template / dtype |
 | Qwen3-30B-A3B-Thinking-2507 | ✅ 已通过 | Operator crash: mm on unknown platform（V2/V3 全空） | gpqa_diamond | 75.0 | **76.0**（↑1.33%，反超基线） | `flagrelease-fix-qwen3-30b-a3b-thinking` GPU 4-7 / :8010 (u139) | 完成，达标（score=null 从 evalscope 报告恢复；blacklist=sort,sort_stable,mm，TP=4） |
-| OpenReasoning-Nemotron-1.5B | 🟡 评测进行中 | 权重下载中 | mmlu / math_500 | 52.21 / 84.0 | mmlu **35.0%**（↓32.9%）；math_500 进行中（159/200 at 04:05） | `flagrelease-fix-openreasoning-nemotron-1.5b` GPU 1 / :8011 (u139) | mmlu 完成（1140题，2026-09-18 01:55，fast_gpqa detect_runaway bug crash，从 evalscope `outputs/mmlu/20260917_033152` 恢复）；math_500 运行中（pid 5540，预计 ~05:30 完成）；mmlu 严重不达标（↓32.9%，超 5% 容差） |
+| OpenReasoning-Nemotron-1.5B | ❌ 精度不达标 + 放弃 | 权重下载中 | mmlu / math_500 | 52.21 / 84.0 | mmlu **35.0%**（↓32.9%）；math_500 已中止 | — | **放弃**：mmlu 差距 17.21 分（↓32.9%），远超 5% 容差；graph 模式亦 OOM（9/51 graphs 后 VRAM 耗尽）；容器已停 |
 | Phi-4-mini-reasoning | ❌ 精度不达标 | 未开始 | mmlu / math_500 | 72.83 / 88.2 | mmlu **58.07%**（↓20.3%）/ math_500 **41.0%**（↓53.5%） | `flagrelease-fix-phi4-mini-reasoning` GPU 2 / :8012 (u139) | iter1：sort,sort_stable 黑名单，TRITON_ATTN，TP=1；双指标严重不达标；分数从 evalscope 报告恢复（mmlu: `outputs/mmlu/20260917_033152`，math_500: `outputs/math_500/20260917_102103`） |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | ❌ 精度不达标 | 未开始 | gpqa_diamond | 75.0 | **70.0**（↓6.67%，差2.5题）| `flagrelease-fix-qwen3.5-27b` GPU 5+6 / :8014 (u139) | iter1：TRITON_ATTN，TP=2，gpu-util=0.95，max-model-len=8192；score=null 从 evalscope 报告恢复；70.0% vs 75.0%，rel_drop=6.67%>5%，不达标 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 🔧 修复中 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%，差2.5题）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | iter2 启动中（sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2） |
 
 ---
 
@@ -46,8 +46,8 @@
 > 更新：2026-09-18 12:10
 
 - **精度已通过**：6 / 18（LFM2.5-1.2B-Thinking 32.0；LFM2.5-1.2B-Instruct 40.0；Marco-o1 28.0 噪声容忍；OpenThinker-7B mmlu 75.0/math 86.5；Qwen3-30B-A3B-Thinking-2507 76.0%；AgentCPM-Report 49.49% ✅）
-- **精度不达标**：9 / 18（gemma-1.1-7b-it 22.0% vs 37.0；NeuralDaredevil-8B 30.0% vs 37.0；Fathom-R1-14B 54.0% vs 60.0 **放弃**；MiroThinker-v1.5-30B iter2 进行中；Phi-3-medium-128k-instruct 24.0% vs 37.0；TinyR1-32B-Preview 58.0% vs 64.0；Phi-4-mini-reasoning mmlu 58.07%/math 41.0% vs 72.83/88.2；Qwen3.5-27B-Distilled 70.0% vs 75.0 暂停；OpenReasoning-Nemotron-1.5B mmlu 35.0% vs 52.21）
-- **评测进行中**：2 / 18（OpenReasoning-Nemotron-1.5B math_500 进行中 ~159/200；MiroThinker-v1.5-30B iter2 GPQA eval 启动）
+- **精度不达标**：9 / 18（gemma-1.1-7b-it 22.0% vs 37.0；NeuralDaredevil-8B 30.0% vs 37.0；Fathom-R1-14B 54.0% vs 60.0 **放弃**；MiroThinker-v1.5-30B iter2 进行中；Phi-3-medium-128k-instruct 24.0% vs 37.0；TinyR1-32B-Preview 58.0% vs 64.0；Phi-4-mini-reasoning mmlu 58.07%/math 41.0% vs 72.83/88.2；Qwen3.5-27B-Distilled 70.0% vs 75.0；OpenReasoning-Nemotron-1.5B mmlu 35.0% vs 52.21 **放弃**）
+- **评测进行中**：1 / 18（MiroThinker-v1.5-30B iter2 GPQA eval 进行中，预计 8-12h）
 - **因失败跳过**：2 / 18（Ministral-8B-Instruct-2410 镜像依赖链缺陷；QwQ-32B 数量已够）
 - **待开始**：0
 
@@ -64,7 +64,7 @@
 | AgentCPM-Report | 4 | 8004 | gpqa_diamond | TRITON_ATTN | ✅ 完成（iter2 49.49%，达标） |
 | Marco-o1 | 5 | 8005 | gpqa_diamond | TRITON_ATTN | ✅ 完成 |
 | NeuralDaredevil-8B-abliterated | 6 | 8006 | gpqa_diamond | TRITON_ATTN | ❌ 完成（不达标） |
-| OpenReasoning-Nemotron-1.5B | 1 | 8011 | mmlu + math_500 | TRITON_ATTN | 🟡 mmlu 完成（35.0%，NV 52.21，↓32.9%，❌ 不达标）；math_500 进行中（pid 5540，~159/200） |
+| OpenReasoning-Nemotron-1.5B | 1 | 8011 | mmlu + math_500 | TRITON_ATTN | ❌ **放弃**（mmlu 35.0%，↓32.9%；graph 模式 OOM；容器已停，GPU 1 空闲） |
 | Phi-3-medium-128k-instruct | 0 | 8009 | gpqa_diamond | TRITON_ATTN | ❌ iter3 完成（24.0%，算子黑名单路径彻底排查完毕，下一步：chat_template/dtype） |
 | Qwen3-30B-A3B-Thinking-2507 | 4-7 | 8010 | gpqa_diamond | TRITON_ATTN | ✅ 完成（GPQA 76.0%，NV 75.0%，↑1.33%） |
 | Phi-4-mini-reasoning | 2 | 8012 | mmlu + math_500 | TRITON_ATTN | ❌ 完成（mmlu 58.07% / math_500 41.0%，双指标严重不达标） |
