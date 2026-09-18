@@ -81,6 +81,28 @@
   **处置**：用 `accuracy_compare.py` 的小样本容忍规则（≤100 题时绝对差 ≤2 题判达标）；若不符合，换 `--limit 0` 跑全量 198 题确认是否真超阈值。
   **来源**：metax/Phi-3-mini-128k-instruct
 
+- **现象**：精度远低于基线（如 46% vs 59%），且响应极长、有明显复读/自我推翻痕迹
+  （典型：末尾出现 `...The answer must be B, but that's wrong`），runaway 检测命中多题。
+  **根因**：**模型自带 `generation_config.json` 的采样参数从未生效，评测一直在用默认贪心
+  （temperature=0.0）**。`fast_gpqa.py` 的 `resolve_gen_params()` 本应优先采用模型配置，
+  但其模型目录定位函数 `_resolve_model_dir()` 只认两个来源：①`--model-name` 本身是本地目录；
+  ②容器内存在 `/flagos-workspace/shared/context.yaml`。标准流程里 `--model-name` 传的是
+  NV 表 key（非路径），且容器内没有 `context.yaml` → 两者都不满足 → **静默退回贪心**。
+  对 `do_sample=true` 的模型，贪心会**确定性**地一路复读无法逃逸。
+  **处置**：在评测容器内补出兜底文件（不改脚本代码）：
+  ```bash
+  docker exec <eval容器> sh -c 'mkdir -p /flagos-workspace/shared && cat > /flagos-workspace/shared/context.yaml <<EOF
+  model:
+    local_path: /models/flagrelease/fixes_models/<模型名>
+    container_path: /models/flagrelease/fixes_models/<模型名>
+  EOF'
+  ```
+  **换模型时必须同步改其中路径**。实测收益（reka-flash-3，同题同量 index 0..114）：
+  正确率 **46.96% → 53.04%（+6.08pt）**，最长响应 **93324 → 36210 字符**，
+  `≥20k` 长响应档正确率 **12.5% → 36.7%**。
+  **来源**：metax/reka-flash-3（2026-09-18；注：此问题影响本项目**全部 10 个模型**的历轮评测，
+  只是多数模型本就该贪心评测而未暴露）
+
 ---
 
 ## 三、性能不达标（吞吐 < V1 的 80%）
@@ -122,9 +144,30 @@
 
 ## 六、评测注意事项（避免踩坑）
 
+- **评测前必查采样参数来源**：跑起来后先 grep 日志确认，这是最容易静默出错的一项：
+  ```bash
+  grep '\[gen\]' <eval日志>
+  ```
+  - 「采用模型 generation_config.json 采样参数: {...}」→ ✅ 正确生效
+  - 「未定位到模型目录（--model-name 非本地路径且 context.yaml 无路径），沿用默认采样参数」
+    → ⚠️ **模型配置被忽略，正在用贪心**，见第二节对应条目
+  该提示是 INFO 级、措辞像正常默认行为，极易被跳过（本项目历轮评审均漏过）。
+
+- **`limit` 语义与同题对照方法**：`limit=50` 严格等于 `index 0..49`（文件顺序前 N 条，
+  **不采样、不打乱**；执行顺序是乱序并发提交，但样本集合是确定的）。全量按 index 递增消费。
+  题序由 `seed=42` 固定，**同一 index 跨轮次就是同一道题**（已验证 v3/v4/v6 共同 index
+  的 target 逐题一致）。→ **做配置对照实验时，固定用相同的 index 区间对比，比不同题数的
+  粗略对比可信得多。**
+
+- **eager 模式的吞吐代价不可接受**：实测 reka-flash-3 eager **16 tok/s** vs graph **160 tok/s**
+  （差 10 倍）。**评测一律用 graph 模式**，不要为了「对齐某个参考配置」而切 eager。
+
 - thinking 模型（QwQ / DeepSeek-R1 / Qwen3 系列）单题输出数千 token，50 题 GPQA 可能跑 6 小时以上，**不要中断**，这是正常现象。
 - 模型名没有命中 `THINKING_PATTERNS` 不代表它不是 reasoning 模型；Magistral 这类模型必须按 README/模型卡确认采样口径，必要时通过 `context.yaml` 标记 `thinking_model` 或临时 monkeypatch，否则会被 `temperature=0.0` 贪心误评。
 - 普通模型也可能输出长推理；自动按 `max_model_len` 推导出的 24576 `max_tokens` 会把 GPQA 单轮耗时放大到小时级。慢速芯片上应按任务协议显式固定 `--max-tokens`，并同时检查 `truncation_detected`、`runaway_detection`，不能只看最终分数。
 - 两次对比评测**必须用完全相同的参数**，否则结果不可比。
 - 评测期间**不要同时跑性能测试**，两者抢 GPU 会污染精度。
 - `truncation_detected: true` 说明输出被 max_tokens 截断，分数偏低不可信；需加大 `--max-model-len` 后重跑。
+- **`max_tokens` 无法通过 CLI 指定**（脚本设计禁止，由 `auto_max_tokens()` 按
+  `max_model_len - 8192` 自适应，且截断检测还会自动翻倍）。需间接控制时，
+  调**服务端 `--max-model-len`** 即可：如要 max_tokens=16384，就把 `--max-model-len` 设为 24576。
