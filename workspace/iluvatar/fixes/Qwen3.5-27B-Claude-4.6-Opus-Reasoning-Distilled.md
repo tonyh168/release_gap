@@ -93,7 +93,7 @@ grep -E "Error|crash|Traceback|RuntimeError|NotImplemented" \
 
 | 迭代 | 黑名单 | TP | 端口 | 结果 | 备注 |
 |------|--------|----|------|------|------|
-| 第1次 | sort,sort_stable | 2 | 8014 | | |
+| 第1次 | sort,sort_stable | 2 | 8014 | ❌ GPQA 70.0%（NV 75.0%，↓6.67%） | TRITON_ATTN，max-model-len=8192，gpu-util=0.95；score=null（thinking bug），从 evalscope 报告恢复；1 runaway（index 22） |
 
 ## Step 4：smoke test
 
@@ -140,21 +140,36 @@ python3 accuracy_compare.py \
 
 ## 现象
 
-（首次运行，待填写）
+- iter1（sort,sort_stable 黑名单，TRITON_ATTN，TP=2，gpu-util=0.95，max-model-len=8192，端口 8014）：
+  - 服务正常启动，smoke test 通过。
+  - 评测完成，fast_gpqa.py 因 thinking 模型 `message.content` 为 list 触发 `detect_runaway` AttributeError，score=null，gpqa.json 未写出正确分数。
+  - 1 个 runaway 样本（index 22，high_repeat_and_compressible，diversity=0.054）。
+  - 从 evalscope 报告 `outputs/gpqa_diamond/20260917_050701/reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled/gpqa_diamond.json` 恢复：`metrics[0]["score"]=0.7` → **70.0%**。
+  - max_tokens=4096（small_ctx 路径触发：max_model_len=8192 ≤ 16384，tokens = 8192//2 = 4096），符合预期。
 
 ## 定位
 
-（待填写）
+- 服务本身正常，无算子 crash。
+- score=null 是已知 fast_gpqa.py thinking 模型 bug（见 STATUS.md 已知问题节），不影响实际精度。
+- 实际精度 70.0% vs NV 75.0%，相对退化 6.67% > 5% 容差 → **不达标**。
+- max-model-len=8192 是为了让 27B 模型在 TP=2、gpu-util=0.95 条件下适配显存（约 54 GB），属于必要约束，不是配置问题。
 
 ## 处置
 
-（待填写）
+iter1 结果不达标，差距 2.5 题（差 5%）。可考虑：
+1. 加大黑名单（追加其他可疑算子）后重跑
+2. 确认是否有精度更高的算子路径
+
+当前结论：**结果记录，暂不继续迭代**（视后续资源安排决定是否重试）。
 
 ## 结果
 
-- 修复后分 / NV 基线：— / gpqa_diamond 75
-- 达标判定（accuracy_compare 退出码）：—
+- 修复后 GPQA 正确率：**70.0%**（从 evalscope 报告恢复，50 题）
+- NV 基线：**75.0%**
+- 相对退化：↓6.67%（超 5% 容差，差 2.5 题）
+- 达标判定：**❌ 不达标**（accuracy_compare 退出码 1）
+- verdict.json：`{"aligned": false, "rel_drop": 0.0667, "message": "精度不达标: 当前=70.00%, NV=75.00%, 相对退化=6.67% > 容差 5.0%"}`
 
 ## 提炼到 KNOWLEDGE 的条目
 
-（完成后填写）
+Qwen3.5-27B 在 BI-V150 TP=2、max-model-len=8192 条件下 GPQA=70.0%（NV=75.0%，↓6.67%），不达标；thinking 模型 score=null 可从 evalscope 报告恢复，不影响精度判定。

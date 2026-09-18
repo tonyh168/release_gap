@@ -96,7 +96,8 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 | 迭代 | 黑名单 | TP | attention-backend | 端口 | 结果 | 备注 |
 |------|--------|-----|------------------|------|------|------|
 | 第1次 | sort,sort_stable | 2 | TRITON_MLA | 8002 | ❌ GPQA 54.0% (NV 60.0%，↓10.0%) | 服务正常起，精度退化 |
-| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 2 | TRITON_ATTN | 8002 | 评测进行中（198题全量） | 扩大黑名单，评测全量数据 |
+| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 2 | TRITON_ATTN | 8002 | ❌ 中止（50h ETA，3.5 tok/s） | 扩大黑名单，评测全量数据；速度仍 3.5 tok/s，198题预估 50h，2026-09-17 中止 |
+| 第3次（iter3） | 同 iter2 | 2 | TRITON_ATTN | 8003 (u139) | ❌ 中止 | 换机器（u139）重试；速度仍 3.5 tok/s，0 bytes output 持续 20min，判定为 BI-V150 固有性能瓶颈，2026-09-17 主动 stop |
 
 ## Step 4：评测
 
@@ -121,18 +122,32 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 | 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 评测进行中（198题全量） | — | 2026-09-16 18:39 启动；eval pid 513 in eval-scope；3.5 tok/s 正常推理 |
 
 ## 现象
-（原 V1 TTFT=244727ms，精度数据空；新镜像冒烟延迟 / GPQA 结果）
+
+- V1 报告：mean TTFT=244727ms，精度数据为空，说明服务起了但推理极慢导致评测超时。
+- iter1（新镜像 vLLM 0.24.0，sort,sort_stable 黑名单，TRITON_MLA，TP=2）：服务正常起，GPQA 50题得分 54.0%（NV 60.0%，↓10.0%）。精度退化超过 5% 容差。
+- iter2（扩大黑名单至 16 算子，TRITON_ATTN，TP=2，u147）：评测启动后发现生成速度仅 **3.5 tok/s**（14B TP=2 在 BI-V150 上），198题预估 50h，判定不可接受，中途中止。
+- iter3（换机 iluvatar-139，端口 8003）：速度仍 3.5 tok/s，0 bytes eval output 持续 20min 以上，确认非黑名单/配置问题，为 BI-V150 固有性能瓶颈，主动 stop。
 
 ## 定位
-（精度为空的原因：评测超时 vs 推理异常；性能慢是 Triton 首次编译 vs 算子问题）
+
+**根因：BI-V150 对 Fathom-R1-14B（14B reasoning 模型）存在固有性能瓶颈，生成速度仅 3.5 tok/s（正常应 100+ tok/s）。**
+
+- 黑名单对速度无影响（iter2 → iter3 换机同样 3.5 tok/s）。
+- 精度退化（iter1 54.0% vs NV 60.0%）叠加极低吞吐，双重不达标。
+- 具体算子级根因未深入排查（非本 session 目标）。
 
 ## 处置
-（确认推理延迟正常；若精度不达标扩大黑名单）
+
+iter1–3 均不达标，不再继续迭代。结论：**放弃**，标记 ❌ 精度不达标 + 性能瓶颈待查。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：iter1 **54.0%**（50题）
+- NV 基线：**60.0%**
+- 相对退化：↓10.0%（超 5% 容差）
+- 达标判定：**❌ 不达标**
+- 额外问题：生成速度 3.5 tok/s（BI-V150 固有瓶颈），198题评测 ETA 约 50h，不可接受
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+Fathom-R1-14B 在 BI-V150 TP=2 上生成速度仅 3.5 tok/s（正常应 100+ tok/s），根因待查；这是 BI-V150 对该模型的固有性能瓶颈，与黑名单配置无关。
