@@ -37,9 +37,9 @@
 | TinyR1-32B-Preview | 🔧 修复中 | 服务启动失败（无镜像产出，全部数据为空） | gpqa_diamond | 64.0 | iter1: **58.0%**（50题，↓9.38%） | `flagrelease-fix-tinyr1-32b-preview` GPU 3,4,7,8 / :8001 (u139) | iter2 评测中（sort,sort_stable,mm,addmm，TRITON_ATTN，TP=4）；2026-09-18 15:00 进度 32/50 |
 | Phi-3-medium-128k-instruct | ⏭️ 跳过（无需修复） | 服务启动失败（原 vLLM 0.20.2 Operator crash，全部数据为空） | gpqa_diamond | 37.0 | **24.0%**（↓35.14%） | `flagrelease-fix-phi3-medium` GPU 0 / :8009 (u139) | iter3（17算子黑名单）得分仍 24.0%，三次完全相同，verdict 判定 `aligned=false`；算子黑名单路径彻底排查完毕。0918 决策不再修复（如需重启：chat_template / dtype） |
 | Qwen3-30B-A3B-Thinking-2507 | ✅ 已通过 | Operator crash: mm on unknown platform（V2/V3 全空） | gpqa_diamond | 75.0 | **76.0**（↑1.33%，反超基线） | `flagrelease-fix-qwen3-30b-a3b-thinking` GPU 4-7 / :8010 (u139) | 完成，达标（score=null 从 evalscope 报告恢复；blacklist=sort,sort_stable,mm，TP=4） |
-| OpenReasoning-Nemotron-1.5B | ❌ 精度不达标 + 放弃 | 权重下载中 | mmlu / math_500 | 52.21 / 84.0 | mmlu **35.0%**（↓32.9%）；math_500 已中止 | — | **放弃**：mmlu 差距 17.21 分（↓32.9%），远超 5% 容差；graph 模式亦 OOM（9/51 graphs 后 VRAM 耗尽）；容器已停 |
-| Phi-4-mini-reasoning | ❌ 精度不达标 | 未开始 | mmlu / math_500 | 72.83 / 88.2 | mmlu **58.07%**（↓20.3%）/ math_500 **41.0%**（↓53.5%） | `flagrelease-fix-phi4-mini-reasoning` GPU 2 / :8012 (u139) | iter1：sort,sort_stable 黑名单，TRITON_ATTN，TP=1；双指标严重不达标；分数从 evalscope 报告恢复（mmlu: `outputs/mmlu/20260917_033152`，math_500: `outputs/math_500/20260917_102103`） |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 🔧 修复中 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%，差2.5题）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | iter2 评测中（sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2）；2026-09-18 15:00 进度 33/50 |
+| OpenReasoning-Nemotron-1.5B | 🔧 重测中 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 52.21 / 84.0 | mmlu **35.0%**（↓32.9%）；math_500 iter1 中止未出分 | `flagrelease-fix-openreasoning-nemotron-1.5b` GPU 0 / :8011 (u139) | 2026-09-18 重开：权重改从 HF 官方仓库重下（sha256 校验与上游一致），并发 32 重测 math_500。iter1 graph 模式 OOM（9/51 graphs） |
+| Phi-4-mini-reasoning | 🔧 重测中 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 72.83 / 88.2 | mmlu **58.07%**（↓20.3%）/ math_500 **41.0%**（↓53.5%） | `flagrelease-fix-phi4-mini-reasoning` GPU 9 / :8012 (u139) | 2026-09-18 重测 math_500：**修复 `--max-model-len` 32768**（vLLM 对 `phi3+longrope` 自动推导成 4096，致 `max_tokens` 被压到 2048、超半数题截断），并发 32。iter1 分数从 evalscope 报告恢复（mmlu: `outputs/mmlu/20260917_033152`，math_500: `outputs/math_500/20260917_102103`） |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | ✅ 已通过 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%）→ iter2: **80.0**（↑6.67%，反超基线）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | 完成，达标。iter2 配置：sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2，`--max-model-len 65536`（iter1 为 8192，把 max_tokens 压到 4096）。verdict 为 2026-09-18 实跑重建（`verdict_gpqa_iter2.json`，exit=0） |
 
 ---
 
@@ -49,20 +49,19 @@
 
 除下列 6 个在途/待决模型外，其余 12 个已**定论**：
 
-- **✅ 精度已通过：6 / 18** — LFM2.5-1.2B-Thinking（32.0 vs 29.0）、LFM2.5-1.2B-Instruct（40.0 vs 29.0）、OpenThinker-7B（mmlu 75.0/77.0 + math 86.5/88.0）、Marco-o1（28.0 vs 32.0，小样本噪声容忍）、Qwen3-30B-A3B-Thinking-2507（76.0 vs 75.0）、AgentCPM-Report（49.49 vs 46.0，198题全量）
+- **✅ 精度已通过：7 / 18** — LFM2.5-1.2B-Thinking（32.0 vs 29.0）、LFM2.5-1.2B-Instruct（40.0 vs 29.0）、OpenThinker-7B（mmlu 75.0/77.0 + math 86.5/88.0）、Marco-o1（28.0 vs 32.0，小样本噪声容忍）、Qwen3-30B-A3B-Thinking-2507（76.0 vs 75.0）、AgentCPM-Report（49.49 vs 46.0，198题全量）、**Qwen3.5-27B-Distilled（80.0 vs 75.0，iter2 反超）**
 - **⏭️ 跳过（无需修复）：6 / 18** — gemma-1.1-7b-it（22.0 vs 37.0）、NeuralDaredevil-8B-abliterated（30.0→22.0 vs 37.0）、Phi-3-medium-128k-instruct（24.0 vs 37.0）、QwQ-32B（56.0 vs 63.0）、AgentCPM-Explore（服务未起）、Ministral-8B-Instruct-2410（镜像依赖链缺陷）
-- **6 个在途/待决（本次未改）** — 见下表
+- **5 个在途/待决（本次未改）** — 见下表
 
-### 🟡 6 个在途/待决模型
+### 🟡 5 个在途/待决模型
 
 | 模型 | 状态 | 当前 | NV | 说明 |
 |------|------|:----:|:--:|------|
-| TinyR1-32B-Preview | 🔧 iter2 评测中 | iter1 58.0% | 64.0 | u139，32/50 进度 |
-| Qwen3.5-27B-Distilled | 🔧 iter2 评测中 | iter1 70.0% | 75.0 | u139，33/50 进度 |
+| TinyR1-32B-Preview | 🔧 iter2 评测中 | iter1 58.0% | 64.0 | u139，42/50 后进入长尾 |
 | MiroThinker-v1.5-30B | 🔧 iter2 评测中（异常慢） | iter1 18.0% | 25.0 | u147，3/50，~41min/题，ETA 32h |
-| Phi-4-mini-reasoning | ❌ 待决 | mmlu 58.07% / math 41.0% | 72.83 / 88.2 | 双指标严重不达标 |
+| Phi-4-mini-reasoning | 🔧 math_500 重测中 | mmlu 58.07% / math 41.0% | 72.83 / 88.2 | u139 GPU 9:8012；已修 `--max-model-len 32768`（原自动推导 4096），并发 32 重测 math_500 |
+| OpenReasoning-Nemotron-1.5B | 🔧 math_500 重测中 | mmlu 35.0% | 52.21 / 84.0 | u139 GPU 0:8011；换 HF 权重 + 并发 32 重测 math_500 |
 | Fathom-R1-14B | ❌ 已放弃 | 54.0% | 60.0 | BI-V150 固有性能瓶颈 3.5 tok/s |
-| OpenReasoning-Nemotron-1.5B | ❌ 已放弃 | mmlu 35.0% | 52.21 | 差距 17.21 分远超容差；graph 模式 OOM |
 
 
 ### 🟡 当前服务运行状态
@@ -78,10 +77,10 @@
 | AgentCPM-Report | 4 | 8004 | gpqa_diamond | TRITON_ATTN | ✅ 完成（iter2 49.49%，达标） |
 | Marco-o1 | 5 | 8005 | gpqa_diamond | TRITON_ATTN | ✅ 完成 |
 | NeuralDaredevil-8B-abliterated | 6 | 8006 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（iter1 30.0% / iter2 22.0%，不达标，不再修复） |
-| OpenReasoning-Nemotron-1.5B | 1 | 8011 | mmlu + math_500 | TRITON_ATTN | ❌ **放弃**（mmlu 35.0%，↓32.9%；graph 模式 OOM；容器已停，GPU 1 空闲） |
+| OpenReasoning-Nemotron-1.5B | 0 | 8011 | math_500 | TRITON_ATTN | 🔧 math_500 重测中（HF 权重，并发 32） |
 | Phi-3-medium-128k-instruct | 0 | 8009 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（iter3 24.0%，三次相同，不再修复） |
 | Qwen3-30B-A3B-Thinking-2507 | 4-7 | 8010 | gpqa_diamond | TRITON_ATTN | ✅ 完成（GPQA 76.0%，NV 75.0%，↑1.33%） |
-| Phi-4-mini-reasoning | 2 | 8012 | mmlu + math_500 | TRITON_ATTN | ❌ 完成（mmlu 58.07% / math_500 41.0%，双指标严重不达标） |
+| Phi-4-mini-reasoning | 9 | 8012 | math_500 | TRITON_ATTN | 🔧 math_500 重测中（已修 max-model-len=32768，并发 32） |
 | TinyR1-32B-Preview | 3,4,7,8 | 8001 | gpqa_diamond | TRITON_ATTN | 🔧 iter2 评测中（iter1 58.0%，NV 64.0%） |
 | Qwen3.5-27B-Distilled | 5,6 | 8014 | gpqa_diamond | TRITON_ATTN | 🔧 iter2 评测中（iter1 70.0%，NV 75.0%） |
 
@@ -107,20 +106,22 @@ ssh iluvatar-147 'docker exec eval-scope bash -c "ls -t /workspace/eval_scripts/
 
 ---
 
-## 剩余待决模型（0918 后）
+## 剩余待决模型（0918 更新）
 
-0918 收敛后，不达标的 6 个模型已统一标为 ⏭️ 跳过（无需修复），**不再投入**。本节仅保留 6 个仍待处理的模型，按是否值得继续投入排序：
+现状：**7 通过 / 6 跳过 / 5 在途待决**。不达标的 6 个已统一标为 ⏭️ 跳过（无需修复），**不再投入**。
+本节保留 5 个仍待处理的模型：
 
-| 模型 | 差距 | 建议 |
-|------|------|------|
-| Qwen3.5-27B-Distilled | 70.0 vs 75.0（↓6.67%，差 2.5 题） | **iter2 评测中**，最接近达标，优先看结果 |
-| TinyR1-32B-Preview | 58.0 vs 64.0（↓9.38%） | **iter2 评测中** |
-| Phi-4-mini-reasoning | mmlu ↓20.3% / math ↓53.5% | 双指标严重不达标，需判断是否值得重开 |
-| MiroThinker-v1.5-30B | 18.0 vs 25.0（↓28.0%） | iter2 运行中但吞吐异常（41min/题，ETA 32h）；建议比照 Fathom 判为性能瓶颈放弃 |
-| Fathom-R1-14B | 54.0 vs 60.0 | 已放弃：BI-V150 对该 14B reasoning 模型固有性能瓶颈（3.5 tok/s） |
-| OpenReasoning-Nemotron-1.5B | mmlu 35.0 vs 52.21 | 已放弃：差距远超容差，graph 模式 OOM |
+| 模型 | 当前 | NV | 状态与建议 |
+|------|:----:|:--:|------|
+| TinyR1-32B-Preview | iter1 58.0%（↓9.38%） | 64.0 | **iter2 评测中**（u139），最接近达标 |
+| Phi-4-mini-reasoning | iter1 math 41.0%（↓53.5%） | 88.2 | **math_500 重测中**（u139，已修 `--max-model-len` 32768，并发 32） |
+| OpenReasoning-Nemotron-1.5B | iter1 mmlu 35.0%（↓32.9%） | 52.21 / 84.0 | **math_500 重测中**（u139，HF 权重 + 并发 32）；iter1 math_500 从未出分 |
+| MiroThinker-v1.5-30B | iter1 18.0%（↓28.0%） | 25.0 | iter2 运行中但吞吐异常（41min/题，ETA 32h）；建议比照 Fathom 判为性能瓶颈放弃 |
+| Fathom-R1-14B | iter1 54.0%（↓10.0%） | 60.0 | 已放弃：BI-V150 对该 14B reasoning 模型固有性能瓶颈（3.5 tok/s；V1 基线即 TTFT=244s） |
 
-> **历史参考**（0918 前的难度排序，现已作废）：Ministral-8B → Marco-o1 → NeuralDaredevil-8B → AgentCPM-Explore → MiroThinker → AgentCPM-Report → Fathom → QwQ-32B → TinyR1-32B。其中 AgentCPM-Report（49.49% ✅）、Marco-o1（噪声容忍 ✅）已达标，其余已跳过。
+> **历史参考**（0918 前的难度排序，现已作废）：Ministral-8B → Marco-o1 → NeuralDaredevil-8B → AgentCPM-Explore → MiroThinker → AgentCPM-Report → Fathom → QwQ-32B → TinyR1-32B。其中 AgentCPM-Report（49.49% ✅）、Marco-o1（噪声容忍 ✅）、Qwen3.5-27B（80.0% ✅）已达标，其余已跳过。
+>
+> **注**：OpenReasoning-Nemotron-1.5B 原标记为"放弃"，2026-09-18 因换 HF 权重重开评测，状态回到在途。
 
 ---
 

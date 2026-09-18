@@ -52,12 +52,65 @@ docker run -itd --name flagrelease-fix-${model_name} \
 ls /models/flagrelease/fixes_models/Phi-4-mini-reasoning/
 ```
 
-若需下载（eval-scope 容器内）：
+**权重来源（2026-09-18 改）**：改用 **HuggingFace 官方仓库** `microsoft/Phi-4-mini-reasoning`
+（<https://huggingface.co/microsoft/Phi-4-mini-reasoning>）。此前那份是从 ModelScope 下的，
+因怀疑权重有问题已于 2026-09-18 删除，改从 HF 重新下载。
+
+> HF 上该仓库非 gated，许可 MIT。模型共 2 个分片 + index。
+
+**下载路径（一律用 HF 官方 repo id，与 URL 一致）**：
+
+| 项 | 值 |
+|----|----|
+| HF 页面 | <https://huggingface.co/microsoft/Phi-4-mini-reasoning> |
+| repo id | `microsoft/Phi-4-mini-reasoning` |
+| 本地目录 | `/models/flagrelease/fixes_models/Phi-4-mini-reasoning` |
+
+下载（在 **eval-scope 容器内**执行）：
+
 ```bash
 docker exec -it eval-scope bash
-modelscope download --model microsoft/Phi-4-mini-reasoning \
-  --local_dir /models/flagrelease/fixes_models/Phi-4-mini-reasoning
+
+# ⚠️ 本集群直连 huggingface.co 不通（curl 15s 超时），必须设镜像，否则下载必失败
+export HF_ENDPOINT=https://hf-mirror.com
+
+# 方式一：hf（huggingface_hub 1.x 的当前命令；容器内已装 1.31.0）
+hf download microsoft/Phi-4-mini-reasoning \
+  --local-dir /models/flagrelease/fixes_models/Phi-4-mini-reasoning
+
+# 方式二：huggingface-cli（旧命令，仍可用，会提示 deprecated）
+# huggingface-cli download microsoft/Phi-4-mini-reasoning \
+#   --local-dir /models/flagrelease/fixes_models/Phi-4-mini-reasoning
 ```
+
+**下载后校验**（避免再次拿到可疑权重）——文件大小应与 HF 上游一致：
+
+| 文件 | 大小（bytes） | sha256 |
+|------|--------------|--------|
+| `model-00001-of-00002.safetensors` | 4903637712 | `a0c24f128e33afb9e406915229af56171e0a2353bc78c1ea1b5260a36b3e6707` |
+| `model-00002-of-00002.safetensors` | 2768428504 | `b4bfcc826b3c637333c6bd24b0dfe38fffd45eff7f4718df454366e875a12415` |
+
+```bash
+cd /models/flagrelease/fixes_models/Phi-4-mini-reasoning
+ls -l model-0000*-of-00002.safetensors                     # 应为上表两个大小
+sha256sum model-0000*-of-00002.safetensors                 # 应与上表一致
+```
+
+> **2026-09-18 实测校验结果：✅ 两个分片均完全一致。**
+> 从 HF 重新下载后 `sha256sum` 输出
+> `a0c24f128e33afb9e406915229af56171e0a2353bc78c1ea1b5260a36b3e6707`（00001）与
+> `b4bfcc826b3c637333c6bd24b0dfe38fffd45eff7f4718df454366e875a12415`（00002），均与上游一致；
+> 大小也与被删除的那份旧权重逐字节相同。
+> **结论：权重不是低分（MMLU 58.07% / math_500 41.0%）的原因**，此前"权重损坏"的怀疑已排除，
+> 后续排查应从算子 / 推理路径入手，勿再重复换权重。
+
+> 环境要求：模型卡标注需 `transformers==4.51.3`（或更高版本支持），
+> 参考依赖 `torch==2.5.1` / `accelerate==1.3.0`；推理时如遇异常可设
+> `attn_implementation="eager"`。镜像内实际版本以 `pip list | grep transformers` 为准。
+>
+> `HF_ENDPOINT` 说明：`https://hf-mirror.com` 是国内常用的 HuggingFace 镜像站，
+> 设了它之后 `hf` / `huggingface-cli` 的请求走镜像域名，**repo id 不用改**。
+> 已验证：本集群 `hf-mirror.com` 可达（HTTP 307），`huggingface.co` 直连超时。
 
 ## Step 3：起 vLLM 服务
 

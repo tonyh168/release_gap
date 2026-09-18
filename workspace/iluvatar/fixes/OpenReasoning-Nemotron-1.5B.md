@@ -52,13 +52,60 @@ docker run -itd --name flagrelease-fix-${model_name} \
 ls /models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B/
 ```
 
-若需下载（eval-scope 容器内）：
+**权重来源（2026-09-18 改）**：改用 **HuggingFace 官方仓库** `nvidia/OpenReasoning-Nemotron-1.5B`
+（<https://huggingface.co/nvidia/OpenReasoning-Nemotron-1.5B>）。此前用的是 ModelScope 镜像
+`nv-community/OpenReasoning-Nemotron-1.5B`，因怀疑权重有问题已于 2026-09-18 删除，改从 HF 重新下载。
+
+> 注：原失败报告写的 `nvidia/OpenReasoning-Nemotron-1.5B` 在 **ModelScope** 上是 404（ModelScope 实际为
+> `nv-community/...`）；该 repo id 在 **HuggingFace** 上是正确的官方路径。两边别混。
+> HF 上该仓库非 gated，许可 CC-BY-4.0（参考模型 Qwen2.5-1.5B，Apache 2.0）。
+
+**下载路径（一律用 HF 官方 repo id，与 URL 一致）**：
+
+| 项 | 值 |
+|----|----|
+| HF 页面 | <https://huggingface.co/nvidia/OpenReasoning-Nemotron-1.5B> |
+| repo id | `nvidia/OpenReasoning-Nemotron-1.5B` |
+| 本地目录 | `/models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B` |
+
+下载（在 **eval-scope 容器内**执行）：
+
 ```bash
 docker exec -it eval-scope bash
-modelscope download --model nv-community/OpenReasoning-Nemotron-1.5B \
-  --local_dir /models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B
+
+# ⚠️ 本集群直连 huggingface.co 不通（curl 15s 超时），必须设镜像，否则下载必失败
+export HF_ENDPOINT=https://hf-mirror.com
+
+# 方式一：hf（huggingface_hub 1.x 的当前命令；容器内已装 1.31.0）
+hf download nvidia/OpenReasoning-Nemotron-1.5B \
+  --local-dir /models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B
+
+# 方式二：huggingface-cli（旧命令，仍可用，会提示 deprecated）
+# huggingface-cli download nvidia/OpenReasoning-Nemotron-1.5B \
+#   --local-dir /models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B
 ```
-> 注：原路径 `nvidia/OpenReasoning-Nemotron-1.5B` 为错误路径（404），实际路径为 `nv-community/OpenReasoning-Nemotron-1.5B`。
+
+**下载后校验**（避免再次拿到可疑权重）——文件大小应与 HF 上游一致：
+
+| 文件 | 大小（bytes） | sha256 |
+|------|--------------|--------|
+| `model.safetensors` | 3087467144 | `ca014625d77d04c281d45ee8ba2ed5018dd3f2165509aa6af8882016bbb4a189` |
+
+```bash
+cd /models/flagrelease/fixes_models/OpenReasoning-Nemotron-1.5B
+ls -l model.safetensors                                   # 应为 3087467144
+sha256sum model.safetensors                               # 应与上表一致
+```
+
+> **2026-09-18 实测校验结果：✅ 完全一致。**
+> 从 HF 重新下载后 `sha256sum` 输出 `ca014625d77d04c281d45ee8ba2ed5018dd3f2165509aa6af8882016bbb4a189`，
+> 与上游一致；文件大小 3087467144 也与被删除的那份旧权重逐字节相同。
+> **结论：权重不是低分（MMLU 35.0% vs 52.21）的原因**，此前"权重损坏"的怀疑已排除，
+> 后续排查应从算子 / 推理路径入手，勿再重复换权重。
+
+> `HF_ENDPOINT` 说明：`https://hf-mirror.com` 是国内常用的 HuggingFace 镜像站，
+> 设了它之后 `hf` / `huggingface-cli` 的请求走镜像域名，**repo id 不用改**。
+> 已验证：本集群 `hf-mirror.com` 可达（HTTP 307），`huggingface.co` 直连超时。
 
 ## Step 3：起 vLLM 服务
 
