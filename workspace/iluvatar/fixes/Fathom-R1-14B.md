@@ -2,7 +2,8 @@
 
 - **失败报告**：flagrelease_fail_reports/Iluvatar/FAILED_Iluvatar_Fathom-R1-14B_202608211539.md
 - **原始失败类型**：精度不达标 + 性能不达标（精度数据为空，性能 V1 mean TTFT=244727ms）
-- **日期**：
+- **日期**：2026-09-16 ~ 2026-09-17（iter1 ~ iter3）
+- **最终结论**：❌ **已放弃**（BI-V150 固有性能瓶颈，实测 3.49 tok/s；精度 54.0% 亦不达标）
 
 ## 背景分析
 
@@ -12,16 +13,19 @@ V1 有性能数据（mean TTFT=244727ms，极慢），但精度数据为空；V2
 Fathom-R1-14B 为 14B reasoning 模型，**TP=2**（14B bf16 ~28 GB，2 卡共 64 GB）。
 权重来源：`FractalAIResearch/Fathom-R1-14B`。
 
-## 环境（实际运行时填写）
+架构（`config.json` 实测）：`Qwen2ForCausalLM` / `qwen2`，48 层，**GQA 40:8**，**非 MoE（dense）**，
+`max_position_embeddings=131072`。
+
+## 环境
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `iluvatar-139` |
+| 宿主机 | `iluvatar-147`（iter1/iter2）→ `iluvatar-139`（iter3） |
 | 容器名 | `flagrelease-fix-fathom-r1-14b` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907` |
 | 模型路径 | `/models/flagrelease/fixes_models/Fathom-R1-14B` |
 | 卡号 | `CUDA_VISIBLE_DEVICES=0,1`（TP=2）|
-| 实际 vLLM 版本 | |
+| 实际 vLLM 版本 | 0.24.0 |
 
 ## Step 0：登录 + 查卡 + 拉取镜像
 
@@ -95,7 +99,7 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 | 迭代 | 黑名单 | TP | attention-backend | 端口 | 结果 | 备注 |
 |------|--------|-----|------------------|------|------|------|
-| 第1次 | sort,sort_stable | 2 | TRITON_MLA | 8002 | ❌ GPQA 54.0% (NV 60.0%，↓10.0%) | 服务正常起，精度退化 |
+| 第1次 | sort,sort_stable | 2 | TRITON_MLA | 8002 | ❌ GPQA **54.0%** (NV 60.0%，↓10.0%) | 服务正常起，精度退化 |
 | 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 2 | TRITON_ATTN | 8002 | ❌ 中止（50h ETA，3.5 tok/s） | 扩大黑名单，评测全量数据；速度仍 3.5 tok/s，198题预估 50h，2026-09-17 中止 |
 | 第3次（iter3） | 同 iter2 | 2 | TRITON_ATTN | 8003 (u139) | ❌ 中止 | 换机器（u139）重试；速度仍 3.5 tok/s，0 bytes output 持续 20min，判定为 BI-V150 固有性能瓶颈，2026-09-17 主动 stop |
 
@@ -119,22 +123,69 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 | 迭代 | 黑名单 | GPQA | 退出码 | 备注 |
 |------|--------|------|--------|------|
 | 第1次 | sort,sort_stable | 54.0% | — | 50题小样本；NV 60.0%，↓10.0%，超容差 |
-| 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 评测进行中（198题全量） | — | 2026-09-16 18:39 启动；eval pid 513 in eval-scope；3.5 tok/s 正常推理 |
+| 第2次 | +16算子 | 评测中止（198题全量） | — | 3.5 tok/s，ETA 50h |
+| 第3次 | 同 iter2 | 评测中止 | — | 换机后同样 3.5 tok/s |
 
 ## 现象
 
 - V1 报告：mean TTFT=244727ms，精度数据为空，说明服务起了但推理极慢导致评测超时。
-- iter1（新镜像 vLLM 0.24.0，sort,sort_stable 黑名单，TRITON_MLA，TP=2）：服务正常起，GPQA 50题得分 54.0%（NV 60.0%，↓10.0%）。精度退化超过 5% 容差。
-- iter2（扩大黑名单至 16 算子，TRITON_ATTN，TP=2，u147）：评测启动后发现生成速度仅 **3.5 tok/s**（14B TP=2 在 BI-V150 上），198题预估 50h，判定不可接受，中途中止。
-- iter3（换机 iluvatar-139，端口 8003）：速度仍 3.5 tok/s，0 bytes eval output 持续 20min 以上，确认非黑名单/配置问题，为 BI-V150 固有性能瓶颈，主动 stop。
+- iter1（vLLM 0.24.0，sort,sort_stable 黑名单，TRITON_MLA，TP=2）：服务正常起，
+  GPQA 50题得分 **54.0%**（NV 60.0%，↓10.0%），精度退化超过 5% 容差。
+- iter2（扩大黑名单至 16 算子，TRITON_ATTN，TP=2）：评测启动后发现生成速度仅 **3.5 tok/s**，
+  198题预估 50h，判定不可接受，中途中止。
+- iter3（换机 iluvatar-139，端口 8003）：速度仍 3.5 tok/s，0 bytes eval output 持续 20min 以上，
+  确认非黑名单/配置问题，主动 stop。
+
+**补充实测（2026-09-19 复核 evalscope 记录）**：
+
+| 指标 | 实测值 |
+|------|--------|
+| 单请求解码速率（`1/tpot` 中位） | **3.49 tok/s** |
+| 输出长度 | 中位 **7636** / 最大 32768 tokens，**仅 1/49 题撞顶** |
+| 结论 | **输出长度正常、几乎不复读 → 慢的原因是解码速率本身，不是复读空转** |
 
 ## 定位
 
-**根因：BI-V150 对 Fathom-R1-14B（14B reasoning 模型）存在固有性能瓶颈，生成速度仅 3.5 tok/s（正常应 100+ tok/s）。**
+**根因：BI-V150 对 Fathom-R1-14B（14B reasoning 模型）存在固有性能瓶颈，生成速度仅 3.49 tok/s
+（正常应 100+ tok/s）。**
 
 - 黑名单对速度无影响（iter2 → iter3 换机同样 3.5 tok/s）。
+- **不是复读造成的**：输出长度中位 7636、仅 1/49 撞顶，属正常范围（与 MiroThinker 的
+  "77% 撞顶"型问题性质不同）。
 - 精度退化（iter1 54.0% vs NV 60.0%）叠加极低吞吐，双重不达标。
 - 具体算子级根因未深入排查（非本 session 目标）。
+
+### ⚠️ 2026-09-19 补充：iter1 的 54.0% 存在**采样口径不对等**
+
+复核模型自带配置发现（与 TinyR1 同类的 `[[fast-gpqa-thinking-detection-bug]]`）：
+
+| 项目 | 实测 |
+|------|------|
+| chat_template 是否含 `<think>` / `</think>` | **是（两者都有）** → 结构上是 thinking 模型 |
+| `generation_config.json` | **不存在** |
+| README 推荐的采样参数 | **temperature 0.6 / top_p 0.95**（README 第 129-130 行） |
+| `detect_thinking("Fathom-R1-14B")` | **False** —— 模式表匹配的是完整子串 `deepseek-r1`，`fathom-r1` 不命中 |
+| 因此实际使用的采样 | **standard 分支：temperature=0.0（贪心）+ top_p=1.0** ❌ |
+
+→ **iter1 的 54.0% 是在贪心解码下测出的，与 NV 基线（按模型推荐采样 0.6/0.95）口径不对等。**
+该分数**不能**作为"Fathom 精度不达标"的最终证据。不过——由于本模型的性能瓶颈是**决定性**的
+（198 题 ETA 50h，不可接受），**精度结论即使修正也不改变"放弃"的处置**。
+
+### ⚠️ 2026-09-19 补充：与 MiroThinker 同属"慢解码"，但两者机制不同
+
+同期复核 MiroThinker-v1.5-30B 发现它同样只有 ~3.6 tok/s，两台机器、两种架构：
+
+| 模型 | 架构 | 参数量 | 单请求解码速率 | 复读情况 |
+|------|------|:------:|:-------------:|---------|
+| Fathom-R1-14B | `qwen2`（**dense**，GQA 40:8） | 14B | **3.49 tok/s** | 几乎无（1/49 撞顶） |
+| MiroThinker-v1.5-30B | `qwen3_moe`（**MoE**） | 30B | **3.65 tok/s** | 严重（74% 撞顶） |
+
+两者架构不同（dense vs MoE）却落在同一速率区间，**提示根因可能在平台/算子层而非某个模型**，
+但本轮未定位到具体算子，**不下结论**。（对比参照：同为 32B dense Qwen2 的 TinyR1 实测 5.06 tok/s，
+1.5B GQA 的 OpenReasoning 实测 10.2 tok/s。）
+
+> 注：以上为**各自评测并发下**的单请求 `1/tpot`，并发档位不同（Fathom、MiroThinker 大体在低并发），
+> 横向比较只能看数量级，不能当作严格的吞吐基准。
 
 ## 处置
 
@@ -142,12 +193,18 @@ iter1–3 均不达标，不再继续迭代。结论：**放弃**，标记 ❌ �
 
 ## 结果
 
-- 修复后 GPQA 正确率：iter1 **54.0%**（50题）
+- 修复后 GPQA 正确率：iter1 **54.0%**（50题，**贪心解码，口径不对等**）
 - NV 基线：**60.0%**
 - 相对退化：↓10.0%（超 5% 容差）
 - 达标判定：**❌ 不达标**
-- 额外问题：生成速度 3.5 tok/s（BI-V150 固有瓶颈），198题评测 ETA 约 50h，不可接受
+- 额外问题：生成速度 3.49 tok/s（BI-V150 固有瓶颈），198题评测 ETA 约 50h，不可接受
 
 ## 提炼到 KNOWLEDGE 的条目
 
-Fathom-R1-14B 在 BI-V150 TP=2 上生成速度仅 3.5 tok/s（正常应 100+ tok/s），根因待查；这是 BI-V150 对该模型的固有性能瓶颈，与黑名单配置无关。
+1. Fathom-R1-14B 在 BI-V150 TP=2 上生成速度仅 **3.49 tok/s**（正常应 100+ tok/s），
+   根因待查；与黑名单配置无关，换机复现。**且它的输出长度正常（中位 7636、仅 1/49 撞顶），
+   所以不是复读造成的慢** —— 这是与 MiroThinker（74% 撞顶）的关键区别。
+2. **`Fathom-R1-14B` 也被 `detect_thinking()` 误判**（名字不命中 `deepseek-r1`），
+   iter1 的 54.0% 是贪心解码下测出的，与 NV 基线口径不对等；引用该数字时须带此前提。
+3. **慢解码可能是跨模型的平台问题**：14B dense（qwen2）与 30B MoE（qwen3_moe）两种完全不同的架构，
+   在两台机器上都落在 ~3.5 tok/s，提示根因在平台/算子层。**遇到了别逐个模型怀疑模型本身。**
