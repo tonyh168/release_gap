@@ -1,6 +1,6 @@
 # Iluvatar 模型修复状态总览
 
-> 更新：2026-09-19 14:20（收完 4 个后台复评，转入「剩余 4 个模型」的继续修复）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
+> 更新：2026-09-19 22:00（iter4 两项假设均被证伪；全部容器已停）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
 
 ## 当前计数
 
@@ -150,12 +150,13 @@
 | **MiroThinker-v1.5-30B** | iter1 **18.0%**；iter3 部分 29.0%（9/31） | 25.0 | ① 反复读（74~90% 撞顶）② **解码仅 3.65 tok/s**（独立问题） | ⏸️ iter3 已人工中止（数据已存档）。重跑方向：**抬 `max_tokens`** + 吞吐三实验（`--max-model-len` 降 32768 → 去 `--enforce-eager` → 查 MoE 后端） |
 | **Fathom-R1-14B** | GPQA **54.0%** | 60.0 | **解码仅 3.49 tok/s**（与黑名单无关，换机复现）；精度口径不对等 | **(a)** 按 README 的 0.6/0.95 重测精度；**(b)** 与 MiroThinker 共用同一套吞吐实验 |
 
-> **2026-09-19 14:30 全部容器已按要求停止**（139 + 147 所有项目容器 `docker stop`，未删除，文件系统保留）。
-> 随后为两个 iter4 评测重启了 139 上的 3 个容器（`openreasoning` GPU 0:8011 / `phi4-mini` GPU 9:8012 / `eval-scope`），
-> **147 上所有容器保持停止**。
-> **iter4 已于 2026-09-19 20:45 前后跑完**（两个都 200/200 完成，收尾同样命中 `detect_runaway` 崩溃，
-> 分数已从 evalscope 报告恢复、verdict 已重建）。
-> ⚠️ **当前这三个容器仍在运行**，待用户指示是否停止。
+> **容器状态时间线（2026-09-19）**：
+> - **14:30** 全部项目容器按要求 `docker stop`（139 + 147，**未删除，文件系统保留**，随时 `docker start` 可恢复）。
+> - **14:33** 为两个 iter4 评测重启了 139 上的 3 个容器（`openreasoning` GPU 0:8011 / `phi4-mini` GPU 9:8012 / `eval-scope`）；147 保持全停。
+> - **20:45 前后** iter4 跑完（两个都 200/200 完成，收尾同样命中 `detect_runaway` 崩溃，分数已从 evalscope 报告恢复、verdict 已重建）。
+> - **21:5x** OpenReasoning 与 Phi-4-mini 两个模型容器也已按要求停止 → **139 的 16 张卡全部释放**。
+>
+> **当前状态：139 只剩 `eval-scope` 在运行（不占 GPU）；其余全部已停（两个机器）。**
 >
 > iter4 的 wrapper 在容器内 `/tmp/`（`openreason_maxtok.py` / `phi4mini_sampling.py`），
 > 已同步备份到 NFS `release_run_logs/_wrappers_backup/`。
@@ -211,17 +212,19 @@
   会同时改变**所有**模型的采样（OpenThinker-7B / Marco-o1 的 0.0→0.7），需连带复核这两个模型的"达标"结论。
 
 
-### 🟡 当前服务运行状态（2026-09-19 14:33 起）
+### 🟡 服务运行状态（**截至 2026-09-19 22:00：全部项目容器已停**）
 
-> **除下表列出的两个 iter4 评测外，139 与 147 上的项目容器均已 `docker stop`（未删除）。**
-> 下面 139 表里标「已停」的行是历史服务位记录，**当前并未运行**。
+> **139 与 147 上的项目容器均已 `docker stop`（未删除，文件系统保留，`docker start` 可恢复）。**
+> **139 只剩 `eval-scope` 在运行（不占 GPU）；147 全停。**
+> 下表是**历史服务位记录**，用于说明每个模型曾经占用哪张卡/哪个端口，**当前均未运行**。
+> ⚠️ 所有 GPU 均已释放（16 张卡均为 68MiB 基线）。
 
 **iluvatar-139**
 
 | 模型 | GPU | 端口 | 数据集 | attention-backend | 状态 |
 |------|:---:|:----:|:------:|:-----------------:|------|
-| **OpenReasoning-Nemotron-1.5B** | **0** | **8011** | **math_500 (200题)** | TRITON_ATTN | ✅ **iter4 已完成**（76.0%，↓9.52%，verdict exit=1）。服务仍在运行 |
-| **Phi-4-mini-reasoning** | **9** | **8012** | **math_500 (200题)** | TRITON_ATTN | ✅ **iter4 已完成**（62.0%，↓29.71%，verdict exit=1）。服务仍在运行 |
+| **OpenReasoning-Nemotron-1.5B** | **0** | **8011** | math_500 (200题) | TRITON_ATTN | ⏹️ **已停**（iter4 完成：76.0%，↓9.52%，verdict exit=1） |
+| **Phi-4-mini-reasoning** | **9** | **8012** | math_500 (200题) | TRITON_ATTN | ⏹️ **已停**（iter4 完成：62.0%，↓29.71%，verdict exit=1） |
 | LFM2.5-1.2B-Thinking | 0 | 8000 | gpqa_diamond | TRITON_ATTN | ✅ 完成（已停） |
 | LFM2.5-1.2B-Instruct | 1 | 8001 | gpqa_diamond | TRITON_ATTN | ✅ 完成（已停） |
 | gemma-1.1-7b-it | 2 | 8002 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（22.0%，不达标）（已停） |
@@ -241,12 +244,14 @@
 | QwQ-32B | 0-3 | 8000 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（56.0% vs 63.0）（已停） |
 | MiroThinker-v1.5-30B | 4-7 | 8001 | gpqa_diamond | TRITON_ATTN | ⏸️ iter3 **已人工中止**（31/50，14:2x），partial 结果已存档（已停） |
 
-> **iter4 任务是后台 nohup + `docker exec -d` 启动，SSH 断开不影响。**
+> **iter4 任务是后台 nohup + `docker exec -d` 启动的，SSH 断开不影响**（已于 20:45 跑完）。
 > wrapper 在容器内 `/tmp/`（`openreason_maxtok.py` / `phi4mini_sampling.py`），
 > **已备份到 NFS `release_run_logs/_wrappers_backup/`**（与历次复评的 wrapper 一起）——**不再只依赖容器 `/tmp`**。
+> ⚠️ 容器虽是 `stop` 而非 `rm`、`/tmp` 内容仍在，但**下次重跑请以 NFS 备份为准**。
 > TinyR1 的 wrapper 全文已抄进 `fixes/TinyR1-32B-Preview.md`（防止 `/tmp` 丢失）；
-> **`openreason_thinking.py` / `miro_thinking.py` / `force_conc.py` 尚未抄进文档，建议下次一并备份。**
-> **139 的三个复评进程均已退出，只剩 147 的 MiroThinker 在跑。**
+> 其余 wrapper（`openreason_thinking.py` / `openreason_maxtok.py` / `miro_thinking.py` /
+> `phi4mini_sampling.py` / `force_conc.py` 等）**已在 NFS `_wrappers_backup/` 备份，无需再抄进文档**。
+> **所有评测进程均已退出**（139 三个复评 + 两个 iter4；147 的 MiroThinker iter3 已人工中止）。
 
 跟踪进度：
 
@@ -335,8 +340,9 @@ ssh iluvatar-139 'docker exec eval-scope ps -eo pid,etime,cmd | grep -E "openrea
   ssh iluvatar-139 'docker cp /models/flagrelease/eval_methods/fast_gpqa.py eval-scope:/workspace/eval_scripts/fast_gpqa.py'
   ssh iluvatar-147 'docker cp /models/flagrelease/eval_methods/fast_gpqa.py eval-scope:/workspace/eval_scripts/fast_gpqa.py'
   ```
-  ⚠️ 但**正在跑的 MiroThinker iter3 不要动**（它已加载旧代码进内存，重新 cp 不影响已启动的进程，
-  只是别顺手重启它）。这一 cp 只对**之后新起**的评测生效。
+  ⚠️ **当前无评测在跑，可以放心 cp**（MiroThinker iter3 已于 0919 人工中止）。
+  这一 cp 只对**之后新起**的评测生效，已启动的进程不受影响。
+  **建议在任何新一轮评测启动前先做这一步** —— 否则 thinking 模型仍会逐个崩在收尾。
 - **影响与兜底**：崩溃发生在算分之后，分数仍在 evalscope 原始报告 `outputs/<dataset>/<ts>/reports/<model>/<dataset>.json`（字段 `metrics[0].score`，×100 即百分比）。已崩的可从报告重建 result JSON 再跑 compare（LFM2.5-1.2B-Thinking 即如此，32.0%；TinyR1/OpenReasoning/Phi-4-mini 的 iter3 也是这么恢复的）。
 - **注意**：从报告恢复时，`runaway_detection` 字段需要用 NFS 那份**已修补**的 `fast_gpqa` 手动重算才能补上。
 
