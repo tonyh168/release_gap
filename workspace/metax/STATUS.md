@@ -1,6 +1,8 @@
 # Metax 模型修复状态总览
 
-> 更新：2026-09-18 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
+> 更新：2026-09-19 | 机器：metax-58 / metax-60 | 镜像：`metax-vllm-0.24.0-pluginfl-tree3.6:xingchen4-0907`（vLLM 0.24.0 / plugin-FL tree3.6）
+>
+> **10 / 10 全部通过。**
 
 ## 图例
 
@@ -27,20 +29,20 @@
 | Baichuan-M2-32B | ✅ 已通过 | 服务启动失败（V1–V4 全无数据） | gpqa_diamond | 64.0 | **74.0**（↑10pt，反超基线） | metax-60 / `flagrelease-fix-baichuan-m2-32b` / :8003 | 完成，达标（evalscope crash 在 runaway 后处理阶段，50 题已全部评完，从 reviews 文件补计分） |
 | GLM-4-32B-0414 | ✅ 已通过 | 服务启动失败 + 精度不达标（Operator crash + 精度退化） | gpqa_diamond | 55.0 | **52.0**（噪声容忍达标） | metax-60 / `GLM-4-32B-0414_flagos` / :8003 | 完成，达标（默认黑名单一次成功，noise_zone=true，1.5 题差 ≤ 2 题阈值） |
 | SOLAR-10.7B-Instruct-v1.0 | ✅ 已通过 | 精度不达标（V2=27.78%，V3=30.3%，均低于 NV×0.95=32.3%）+ plugin-FL 报错 | gpqa_diamond | 34.0（nv_baseline.yaml；NV vllm 官方镜像实测 50题=24%，198题=26.26%） | v2=26.0%✅（与 NV vllm 官方镜像实测持平） | metax-60 / 容器已停止 | 完成，达标（nv_baseline.yaml 基线与 NV vllm 官方镜像实测不一致；MetaX v2=26% 与 NV 实测 ~26% 持平） |
-| reka-flash-3 | 🟡 评测进行中 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0 | v1=44%❌ v2=42%❌ v3 进行中（198 题全量，graph 模式，FlagOS 配置） | metax-60 / `flagrelease-fix-reka-flash-3` / :8001（容器运行中） | **等待 v3 结果**（手动复现文档 FlagOS 198题=51.52%；v3 使用 USE_FLAGGEMS=1 + VLLM_FL_PREFER=flagos + graph 模式 + --generation-config vllm） |
+| reka-flash-3 | ✅ 已通过 | 精度不达标（V3=52.02% vs NV=59%，rel_drop=11.8%）+ plugin-FL 报错 | gpqa_diamond | 59.0（**不采用**，见下；**NV 原生实测 198 题 = 53.54%** 为判定基准） | v1=44%❌ v2=42%❌ v3=46%❌ v4/v5 作废 → **v6=54.04%✅（107/198 全量）** | metax-60 / `flagrelease-fix-reka-flash-3` / :8001 | 完成，达标（根因是**采样参数从未生效**而非 plugin-FL 退化；补 `context.yaml` 使 `generation_config.json` 生效，默认黑名单无需改动） |
 
 ---
 
 ## 当前进度快照
 
-- **精度已通过**：9 / 10（Phi-3-mini-128k-instruct **42%**（三路 A/B/C，v2 扩展黑名单）；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0；SOLAR-10.7B-Instruct-v1.0 26%（与 NV vllm 官方镜像实测持平））
+- **精度已通过**：**10 / 10**（Phi-3-mini-128k-instruct **42%**（三路 A/B/C，v2 扩展黑名单）；Phi-3.5-mini-instruct 34.0；Phi-4-mini-instruct 44.0；Qwen3-Coder-30B-A3B-Instruct 50.0；GLM-4-32B-0414 52.0；EXAONE-4.0-32B 63.13%；Qwen3-30B-A3B-Thinking-2507 74.0；Baichuan-M2-32B 74.0；SOLAR-10.7B-Instruct-v1.0 26%（与 NV vllm 官方镜像实测持平）；**reka-flash-3 54.04%（198 题全量，反超 NV 原生实测 53.54%）**）
 - **评测进行中**：0 / 10
-- **修复暂停**：1 / 10（reka-flash-3，v3 全量 198 题评测进行中）
+- **修复暂停**：0 / 10
 - **尚未开始**：0 / 10
 
-### 🟡 当前运行中的服务
+### 当前运行中的服务
 
-- `flagrelease-fix-reka-flash-3`（metax-60，GPU 1/2，port 8001）：v3 全量 198 题评测进行中（2026-09-18）
+无评测任务在跑。reka-flash-3 的容器（`flagrelease-fix-reka-flash-3`、`reka-eval-v3`）评测结束后**未停止，仍挂在 metax-60 上**，可回收 GPU 1/2。
 
 ---
 
@@ -108,9 +110,42 @@
 - **评测结果**：63.13%（125/198，全量 198 题），NV 62.0%（↑1.13pt 反超），accuracy_compare 退出码 0
 - **注意**：原报告 V1–V4 全空（Operator crash）；默认黑名单一次起成功。fast_gpqa score=null（解析 bug），从 evalscope reviews 的 `sample_score.score.value.accuracy` 补计分。50 题 noise_zone 达标后重跑 198 题全量排除噪声，干净通过。EXAONE 输出以 `Answer: X`（首字母大写，非全大写 `ANSWER:`）结尾，自行后处理需用 `re.IGNORECASE`。机器：metax-58
 
+### reka-flash-3（✅ 达标）
+
+- **关键策略**：根因**不是 plugin-FL 算子退化，而是采样参数从未生效**。`fast_gpqa.py` 的
+  `_resolve_model_dir()` 在标准流程下必然返回 None（`--model-name` 传基线表 key、容器内无
+  `context.yaml`），于是**静默退回贪心 temp=0.0**。reka 的 `generation_config.json` 声明
+  `do_sample=true / temperature=0.6`，贪心下模型进入复读循环后**确定性**无法逃逸。
+  在评测容器内补出 `/flagos-workspace/shared/context.yaml` 即修复（**不改脚本代码**）
+- **环境变量/配置**：默认黑名单（**与 v1 相同，全程未改**），graph 模式，
+  `--max-model-len 24576`（间接得到 max_tokens=16384），TP=2（GPU 1/2），port 8001
+- **评测结果**：**54.04%（107/198，198 题全量）**，达标基准 NV 原生实测 53.54%（106/198），**反超 0.50pt**
+- **基准裁定**：`nv_baseline.yaml` 的 59.0 **不采用**（口径不符，出自 NV 失败报告，
+  且同一报告记录 NV 上 V2=60.0% / V3(plugin)=48.0%，证明 plugin-FL 在 NV 上同样退化 12pt，
+  属跨平台共性）。处置方式与 SOLAR-10.7B 一致，以实测为准
+- **注意**：①v6 与 v1/v2 的黑名单**完全相同**，唯一变量是采样参数——这直接证明此前的
+  「plugin-FL 精度退化」结论是误判；②fast_gpqa score=null，从 evalscope 报告
+  `score=0.5404` 补计分；③runaway 复读检出 1/198（index 127）；
+④最高响应 46797 字符，`≥20k` 档仍有 81 题、正确率仅 33.3%，是分数上限的主要来源
+
 ---
 
 ## 已知问题与规律
+
+### ⚠️ generation_config.json 静默失效（本项目最高优先级的坑）
+
+`fast_gpqa.py` 的 `resolve_gen_params()` 本应优先采用模型自带 `generation_config.json`，
+但其模型目录定位函数 `_resolve_model_dir()` 只有两个来源：①`--model-name` 本身是本地目录；
+②读容器内 `/flagos-workspace/shared/context.yaml`。**本项目标准流程两者都不满足**
+（`--model-name` 传 NV 基线表 key、容器里没有 `context.yaml`），于是**静默退回贪心
+`temperature=0.0`**。已查明：**本项目 10 个模型的每一轮评测都命中了这个问题**——
+日志里那行 `[gen] 未定位到模型目录…沿用默认采样参数` 是 INFO 级、措辞像正常默认行为，
+历轮评审均漏过。
+
+对多数模型无害（本就该贪心），但对 `do_sample=true` 的模型是致命的（reka-flash-3 因此
+从 54% 掉到 44%）。**每次评测前必须 `grep '\[gen\]' <eval日志>`**：
+出现「采用模型 generation_config.json 采样参数」才正确；「未定位到模型目录」= 正在用贪心。
+**换模型评测必须同步改 `context.yaml` 里的路径。**
 
 ### vllm 路径（非交互 shell 必须用绝对路径）
 
