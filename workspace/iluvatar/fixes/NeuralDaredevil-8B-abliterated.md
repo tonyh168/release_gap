@@ -146,14 +146,15 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 
 - iter1：`VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable`，`TRITON_ATTN`，TP=1，GPU 1，port 8006。
 - iter2：追加 `mm,addmm` 至黑名单，结果更差，已验证方向错误。
-- 下一步方向：在 `sort,sort_stable` 基础上探查其他可能影响精度的算子（排除 `mm`/`addmm`）；或排查 `chat_template`/`dtype` 等非算子因素。
+- 下一步方向（未执行）：在 `sort,sort_stable` 基础上探查其他可能影响精度的算子（排除 `mm`/`addmm`）；或排查 `chat_template`/`dtype` 等非算子因素。
+- **0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。** 两轮均未达标且第二轮证明方向错误，剩余可排查空间只有非算子因素（chat_template/dtype），暂不投入。
 
 ## 结果
 
-- iter1 GPQA：**30.0%**（50 题，NV 37.0%，↓18.9%）；accuracy_compare 退出码 1（不达标）
-- iter2 GPQA：**22.0%**（50 题，NV 37.0%，↓40.54%）；accuracy_compare 退出码 1（不达标，更差）
+- iter1 GPQA：**30.0%**（50 题，NV 37.0%，↓18.92%）；`verdict_gpqa_diamond.json` 判定 `aligned=false`（2026-09-18）
+- iter2 GPQA：**22.0%**（50 题，NV 37.0%，↓40.54%）；`verdict_gpqa_iter2.json` 判定 `aligned=false`
 - evalscope 报告路径：`outputs/gpqa_diamond/20260918_055330`
-- 达标判定：❌ 未达标；iter2 证明 mm/addmm 黑名单对该模型有害
+- 达标判定：❌ 未达标；iter2 证明 mm/addmm 黑名单对该模型有害。0918 决策不再修复
 
 ## 提炼到 KNOWLEDGE 的条目
 

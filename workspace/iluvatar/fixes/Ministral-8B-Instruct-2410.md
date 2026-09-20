@@ -113,18 +113,44 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 | 第2次 | | | | |
 
 ## 现象
-（原 V2/V3 GPQA=28.0%，41算子；新镜像重测结果）
+
+原报告：V2/V3 GPQA = 28.0%（vs NV 30.0%，↓6.7%），41 算子。
+
+新镜像下**服务根本未能启动**：`serve.log`（2026-09-15，仅 11KB）末段为
+
+```
+Error: name 'SpecialTokens' is not defined
+  (mistral_common.py → SpecialTokens.bos.value)
+```
+
+产出目录下只有 `serve.log` + `serve.pid`，**无 result、无 verdict、无 eval.log**。
 
 ## 定位
-（FlagGems 5.3.4.post1 是否修复精度差距；若仍不达标，哪个算子引入误差）
+
+**镜像依赖链缺陷，非模型问题**：
+
+`is_vision_available()` = False → `is_mistral_common_available()` = False →
+mistral tokenizer 模块在导入期即引用未定义的 `SpecialTokens`，NameError。
+
+即 `transformers` 与 `mistral_common` 版本组合在该镜像内不自洽，Ministral 的 tokenizer 路径直接不可用，
+与模型权重、算子精度均无关。
 
 ## 处置
-（扩大黑名单 / 精度收敛验证）
+
+**0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。**
+
+本模型差距仅 6.7%（28.0 vs 30.0，41 算子），原是最有希望直接达标的一个；
+若后续换用 `transformers`/`mistral_common` 版本自洽的镜像，应优先重试。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：**无**（服务未起，未评测）
+- NV 基线：30.0%
+- 达标判定：无法判定（无数据）
+- 产物：仅有 `serve.log` / `serve.pid`
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+Mistral 系模型（Ministral / Mistral-Small 等）在镜像内需 `is_vision_available()` 为 True
+才会启用 `mistral_common` tokenizer；该项为 False 时会在导入期抛
+`name 'SpecialTokens' is not defined`，表现为服务无法启动——属镜像依赖链问题，非算子/模型问题。

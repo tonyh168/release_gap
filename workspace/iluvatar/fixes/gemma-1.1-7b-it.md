@@ -134,18 +134,41 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 ---
 
 ## 现象
-（贴启动日志关键行；原报告全空，需从头复现）
+
+原报告 V1–V4 全部数据为空，流程仅 32m39s，推测服务未起。
+
+新镜像下服务正常启动（`TRITON_ATTN`，port 8002，TP=1），50 题全部跑完，评测耗时 1693s，
+无截断（`truncation_detected=false`）、无复读（`runaway 0/50`），`temperature=0.0` 贪心解码。
+
+**实测 GPQA = 22.0%（11/50）**，NV 基线 37.0%，`aligned=false`（↓40.54%）。
+
+> ⚠️ 本日志的迭代记录未回填：Step 3/Step 4 的迭代表原样为空，评测产出目录里也只有最终一轮产物
+> （`eval.log` / `gpqa_diamond_result.json` / `verdict_gpqa_diamond.json`，均为 2026-09-15 07:07）。
+> 因此中间尝试了几轮黑名单、试过哪些算子，已不可考；下方结论只基于可验证的产物。
 
 ## 定位
-（服务是否能在新镜像下启动；是否为 Gemma attention 实现问题）
+
+- 原报告的"服务起不来"在新镜像（vLLM 0.24.0 + FlagGems 5.3.4.post1）下**未复现**——服务启动正常。
+- 分数 22.0% 低于随机水平（4选1期望 25%），且无截断、无复读，属**真实精度退化**而非噪声或解析问题。
+- 与 Phi-3-medium-128k-instruct 的表现同类（输出接近随机、算子黑名单无效），怀疑同类根因（chat_template / dtype 路径）。
+- 未定位到具体算子。
 
 ## 处置
-（补充黑名单 / 调整 --attention-backend）
+
+**0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。**
+
+如后续需要重启此模型，建议排查顺序：chat_template（Gemma 的 `<start_of_turn>`/`<end_of_turn>` 格式）
+→ 采样参数 → 算子精度。
 
 ## 结果
-- 修复后正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后正确率：**22.0%**（50 题）
+- NV 基线：37.0%
+- 相对退化：↓40.54%（超 5% 容差）
+- 达标判定：**❌ 未达标**（`accuracy_compare` 退出码 1，`aligned=false`）
+- 产物：`/models/release_run_logs/gemma-1.1-7b-it/verdict_gpqa_diamond.json`（2026-09-15）
+- evalscope 原始目录：`outputs/gpqa_diamond/20260915_064125`
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+无新规律（未定位到根因，仅记录"服务启动失败在新镜像下自愈、但精度退化仍在"这一现象）。
