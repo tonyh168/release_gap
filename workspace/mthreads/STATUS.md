@@ -81,11 +81,11 @@
 | DASD-4B-Thinking | gpqa_diamond 44.0 | 📋 待开始 | |
 | Dhanishtha-2.0-preview | mmlu 81.09 / math_500 68.6 | 📋 待开始 | |
 | GLM-4.7-Flash | gpqa_diamond 55 | 📋 待开始 | |
-| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | 📋 待开始 | |
+| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU1/:8001，35s 起服务，短+长 prompt 均 200）；混合 SSM 架构无需特殊 attention-backend。⚠ 评测前须补 `context.yaml`（thinking 标记） |
 | Light-R1-14B-DS | mmlu 85.17 / math_500 93.2 | 📋 待开始 | |
 | Qwen3-4B-SafeRL | mmlu 81.39 / math_500 94.8 | 📋 待开始 | 另有 `float4_e2m1fn_x2` 崩溃记录 |
 | ZR1-1.5B | mmlu 50.54 / math_500 89.4 | 📋 待开始 | |
-| reka-flash-3 | gpqa_diamond 59 | 📋 待开始 | 先查采样参数（贪心复读史，见 KNOWLEDGE 二） |
+| reka-flash-3 | gpqa_diamond 59 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU2/:8002，45s 起服务，短+长 prompt 均 200）。⚠ 评测前须补 `context.yaml`——metax 侧已查明其低分真凶是采样参数被忽略（`do_sample=true,temp=0.6`），摩尔可直接复用该结论验证 |
 | rnj-1-instruct | gpqa_diamond 37 | 📋 待开始 | |
 
 ## 🌀 生成失控 / ⏳ 超评测预算（2）
@@ -137,19 +137,45 @@
 
 ## 当前进度快照
 
-> 更新：2026-09-20 14:20
+> 更新：2026-09-20 14:40
 
 - **精度已通过**：0 / 50（3 个模型在流水线侧已达标，待复核确认后计入）
 - **精度不达标**：0 / 50
-- **服务已起/冒烟通过**：1 / 50（`Phi-4-reasoning-plus` 🟢 —— SOP 端到端验证成功）
+- **服务已起/冒烟通过**：3 / 50（`Phi-4-reasoning-plus` :8000 / `LFM2.5-1.2B-Thinking` :8001 / `reka-flash-3` :8002，**全部一次通过**）
 - **评测进行中**：0 / 50
-- **待开始**：49 / 50
+- **待开始**：47 / 50
+
+### 当前 GPU 占用（mthreads-25）
+
+| 卡 | 占用 | 服务 |
+|----|------|------|
+| GPU0 | 73797 MiB | Phi-4-reasoning-plus :8000 |
+| GPU1 | 73882 MiB | LFM2.5-1.2B-Thinking :8001 |
+| GPU2 | 73742 MiB | reka-flash-3 :8002 |
+| GPU3–7 | 0 MiB | 空闲（5 张） |
+
+> ⚠ 三张卡各占 73GB ≈ 90%——`--gpu-memory-utilization 0.9` 是**按卡容量预留**，与模型大小无关
+> （1.2B 的小模型也吃满 73GB）。**一模型一卡**，8 卡机最多同时跑 8 个。若要在同卡多开，
+> 必须显式下调该值。
 
 ### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
 
-| 模型 | 大小 | 状态 |
-|------|------|------|
-| Phi-4-reasoning-plus | 28 GB | ✅ 完成 |
-| LFM2.5-1.2B-Thinking | 2.2 GB | ✅ 完成 |
-| reka-flash-3 | 39 GB | ✅ 完成 |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 51.75 GB | 🟡 下载中 |
+> 更新：2026-09-20 14:25 —— **四个模型全部下载完成**，均无 `.incomplete` 残留、`config.json` 齐备。
+
+| 模型 | 大小 | 架构 | 状态 |
+|------|------|------|------|
+| Phi-4-reasoning-plus | 28 GB | `Phi3ForCausalLM`（dense GQA） | ✅ 已下 + 🟢 服务运行中 |
+| LFM2.5-1.2B-Thinking | 2.2 GB | `Lfm2ForCausalLM`（混合 SSM） | ✅ 已下 + 🟢 服务运行中 |
+| reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 + 🟢 服务运行中 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（11 分片） | ✅ 已下，待起服务 |
+
+> ⚠ `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` 的架构是 **`Qwen3_5ForConditionalGeneration`**
+> （非纯文本 `CausalLM`，config 里带 `image_token_id`），起服务时可能需额外参数，**首次起要留意**。
+
+### 评测阻塞项（三个服务都已就绪，卡在评测环境）
+
+| 项 | 状态 |
+|----|------|
+| evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
+| 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
+| 三个 reasoning 模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径） |

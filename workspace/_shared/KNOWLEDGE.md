@@ -111,6 +111,30 @@
   注意该文件路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`——容器没挂 `/flagos-workspace` 时
   要在容器内建同路径目录。
   **来源**：mthreads/Phi-4-reasoning-plus 服务冒烟（2026-09-20）；同类问题曾见于 hygon/Magistral-Small-2506
+  （摩尔侧同批实测确认：`LFM2.5-1.2B-Thinking` 输出 `<think>`、`reka-flash-3` 输出 `<reasoning>`，**三个都不在名单里**）
+
+- **现象**：vLLM 服务端启动时打 WARNING：`Default vLLM sampling parameters have been overridden by the
+  model's generation_config.json: {...}`，于是以为「采样参数问题已经被 vLLM 自动解决了」。
+  **根因**：**服务端确实采纳了模型采样参数作为默认值**，但评测脚本会在请求里**显式传 `temperature=0.0`**，
+  显式值覆盖服务端默认 → 照样退化成贪心。
+  **处置**：①**别以为看到这条 WARNING 就不需要修评测侧**——`context.yaml` 该补还得补；
+  ②**绝不要加 `--generation-config vllm`**——那会主动丢弃模型采样参数，让问题更严重。
+  **来源**：mthreads/reka-flash-3 服务实测（2026-09-20）
+
+- **现象**：混合 SSM 模型（LFM2 系，config 带 `conv_L_cache` / `block_*` 字段）在摩尔起服务时告警
+  `Add 2 padding layers, may waste at most 20.00% KV cache memory`。
+  **根因**：卷积层与注意力层结构不同，vLLM 需补 padding 层对齐层数。
+  **处置**：**不影响正确性**，可正常服务（实测 LFM2.5-1.2B-Thinking 短/长 prompt 均 200）。
+  但 KV cache 利用率最多损失 20%，配合大 `max_model_len`（该模型 128000）时要核算显存。
+  另：这类模型**不要指定 TRITON_MLA**（iluvatar 经验），摩尔走默认 `--attention-backend` 即可。
+  **来源**：mthreads/LFM2.5-1.2B-Thinking（2026-09-20）
+
+- **现象**：小模型（1.2B）独占一张 80GB 卡，实测占用 73882 MiB。
+  **根因**：`--gpu-memory-utilization 0.9` 是**按卡容量**预留 KV cache，与模型大小无关
+  ——1.2B 的小模型也会把整卡 73GB 全部吃掉。
+  **处置**：想在同一张卡上多开服务，必须显式下调 `--gpu-memory-utilization`；
+  否则「一模型独占一卡」。8 卡机器上跑 50 个模型时这条很关键。
+  **来源**：mthreads/LFM2.5-1.2B-Thinking（2026-09-20，权重仅 2.2GB 却占用 73.8GB）
 
 ---
 
