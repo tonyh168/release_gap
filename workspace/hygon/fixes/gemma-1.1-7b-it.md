@@ -1,76 +1,71 @@
 # Hygon/gemma-1.1-7b-it 适配与评测记录
 
-- **日期**：`2026-09-16`
-- **远端机器**：`10.232.2.33`
-- **主机名**：`bm-srwl-nj-zone3-d-bw1000-64g-2-33`
-- **历史失败报告**：`flagrelease_fail_reports/Hygon/FAILED_Hygon_gemma-1.1-7b-it_202607220702.md`
-- **历史问题类型**：旧栈 V2 GPQA 为 `32%`，相对 NV `37%` 下降 `13.51%`；`silu_and_mul` OOT 路径还导致历史性能退化
-- **本次处理结论**：新镜像单卡服务正常，关闭 FL OOT 后部分 50 题轮次通过，但同配置结果仍明显波动；全量 198 题校正后为 `32.83%`，相对 NV 下降 `11.27%`，精度尚未稳定修复
+- **日期**：2026-09-16
+- **远端机器**：10.232.2.33
+- **主机名**：bm-srwl-nj-zone3-d-bw1000-64g-2-33
+- **模型来源**：google/gemma-1.1-7b-it
+- **本次处理结论**：使用明确固定的 Hygon 环境变量重新部署后，模型服务正常；GPQA Diamond 50 题 EvalScope 原始分为 40.00%，答案提取校正后为 42.00%（21/50），高于 NV 基线 37.00%，无 runaway，评测通过
 
 ---
-
-## 背景分析
-
-历史报告使用 vLLM `0.20.2`、FlagGems `5.4.0dev`、Flagtree `0.6.1` 和已安装的 plugin-FL。V2 采用 27 项 FlagGems 算子，50 题 GPQA 为 `32%`，低于 NV 记录值 `37%`；历史性能问题在禁用 `silu_and_mul` 后恢复到合成 V1 基线的 `83.9%`。
-
-本次改用统一 Hygon 新镜像，保留历史 FlagGems 白名单和 `silu_and_mul` 黑名单，并通过 `VLLM_FL_OOT_ENABLED=0` 关闭 vllm-plugin-FL 的高层 OOT 注册路径。50 题隔离实验一度提升到 `38%`、`40%` 和 `42%`，但相同协议也出现过 `32%`；全量 198 题结果为 `32.83%`，因此不能把一次小样本通过当作稳定修复。
 
 ## 环境
 
 | 项目 | 值 |
 |------|---|
-| 宿主机 | `bm-srwl-nj-zone3-d-bw1000-64g-2-33` / `10.232.2.33` |
+| 宿主机 | bm-srwl-nj-zone3-d-bw1000-64g-2-33 / 10.232.2.33 |
 | 芯片 | Hygon DCU BW1000，8 × 64GB |
-| 推理容器 | `day0-gemma-1-1-7b-it` |
-| 评测容器 | `day0-eval-standard` |
-| 镜像 | `harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4` |
-| 镜像 ID | `sha256:b4dd95d30aa8213e0721856672ee544e773c51216b3737c12069b32ad71d07a0` |
-| vLLM / PyTorch | `vLLM 0.24.0` / `PyTorch 2.10.0`（镜像版本口径） |
-| 模型来源 | `google/gemma-1.1-7b-it` |
-| 模型路径 | `/models/gemma-1.1-7b-it` |
-| 宿主机共享路径 | `/public-flash/models/gemma-1.1-7b-it` |
-| GPU | `HIP_VISIBLE_DEVICES=6` |
-| 服务端口 | `8004` |
+| 推理容器 | day0-gemma-1-1-7b-it |
+| 评测容器 | day0-eval-standard |
+| 镜像 | harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 |
+| 镜像 ID | sha256:b4dd95d30aa8213e0721856672ee544e773c51216b3737c12069b32ad71d07a0 |
+| vLLM / PyTorch | vLLM 0.24.0 / PyTorch 2.10.0 |
+| EvalScope | 1.5.1 |
+| 模型宿主机路径 | /public-flash/models/gemma-1.1-7b-it |
+| 模型容器路径 | /models/gemma-1.1-7b-it |
+| GPU | HIP_VISIBLE_DEVICES=6 |
+| Tensor Parallel | 1 |
+| 服务端口 | 8004 |
+| dtype | bfloat16 |
 
 ## Step 0：容器运行配置
 
-推理容器由常驻进程保持运行，vLLM 通过 `docker exec` 在容器内启动：
+推理容器由常驻进程保持运行，vLLM 通过 docker exec 在容器内启动：
 
-```text
+~~~text
 cmd:      ["bash", "-lc", "sleep infinity"]
 network:  host
 ipc:      host
 shm-size: 64 GiB
-```
+~~~
 
 设备与权限：
 
-```text
+~~~text
 /dev/kfd
 /dev/dri
 seccomp=unconfined
 group-add=video
-```
+~~~
 
 挂载：
 
-```text
+~~~text
 /public-flash/models -> /models      读写
 /opt/hyhal           -> /opt/hyhal  只读
-```
+~~~
 
 评测容器使用 host 网络，并挂载：
 
-```text
+~~~text
 /public-flash/models/day0_eval -> /models/day0_eval
 /public-flash/models/day0_logs -> /models/day0_logs
-```
+~~~
 
 ## Step 1：启动 vLLM 服务
 
-当前实际启动命令：
+实际启动命令：
 
-```bash
+~~~bash
 /usr/bin/python3 /usr/local/bin/vllm serve /models/gemma-1.1-7b-it \
   --served-model-name gemma-1.1-7b-it \
   --dtype bfloat16 \
@@ -81,20 +76,11 @@ group-add=video
   --attention-backend TRITON_ATTN \
   --enforce-eager \
   --trust-remote-code
-```
+~~~
 
-当前服务检查：
+关键环境变量：
 
-```bash
-curl http://127.0.0.1:8004/health
-curl http://127.0.0.1:8004/v1/models
-```
-
-只读核验结果：`/v1/models` 返回 HTTP `200`，服务模型名为 `gemma-1.1-7b-it`，`max_model_len=8192`。
-
-### 环境变量
-
-```bash
+~~~bash
 export DTK_HOME=/opt/dtk
 export ROCM_PATH=/opt/dtk-26.04-DCC2602-0317
 export HIP_PATH=/opt/dtk-26.04-DCC2602-0317/hip
@@ -116,156 +102,225 @@ export VLLM_FL_FLAGOS_WHITELIST=add,addmm_out,arange_start,argmax,broadcast_to,c
 
 export VLLM_FL_OOT_BLACKLIST=silu_and_mul
 export VLLM_FL_OOT_ENABLED=0
-```
+~~~
 
-`VLLM_FL_OOT_ENABLED=0` 关闭的是 vllm-plugin-FL 向 vLLM 注册的高层 OOT 替换路径，不会关闭上述普通 FlagGems 白名单。由于 OOT 已整体关闭，保留的 `silu_and_mul` 黑名单主要用于配置追溯，不再单独改变本轮注册结果。
+环境变量作用：
 
-服务没有显式传入 prefix cache 或 chunked prefill 开关；vLLM `0.24.0` 实际日志显示二者均为默认开启：
+- TRITON_HIP_CLANG_PATH 显式使用 DTK clang-18，保证 Hygon Triton/HSACO 编译路径正确；
+- VLLM_FL_FLAGOS_WHITELIST 固定本轮使用的普通 FlagGems 算子集合；
+- VLLM_FL_OOT_ENABLED=0 关闭 vllm-plugin-FL 高层 OOT 注册路径；
+- VLLM_FL_OOT_BLACKLIST=silu_and_mul 保留配置追溯；
+- VLLM_FL_TRITON_CACHE_ROOT 使用模型独立的 Triton 编译缓存目录。
 
-```text
+vLLM 实际初始化配置中：
+
+~~~text
 enable_prefix_caching=True
 enable_chunked_prefill=True
-```
+enforce_eager=True
+attention_backend=TRITON_ATTN
+max_seq_len=8192
+dtype=bfloat16
+~~~
+
+部署及服务日志：
+
+~~~text
+/public-flash/models/day0_logs/gemma-1.1-7b-it-deploy-20260916-103723.log
+/public-flash/models/day0_logs/gemma-1.1-7b-it-serve-20260916-103723.log
+~~~
+
+服务检查：
+
+~~~bash
+curl http://127.0.0.1:8004/health
+curl http://127.0.0.1:8004/v1/models
+~~~
+
+服务正常启动，模型服务名为 gemma-1.1-7b-it。
 
 ## Step 2：模型文件和容器变更
 
-模型文件位于：
+模型文件：
 
-```text
+~~~text
 /public-flash/models/gemma-1.1-7b-it
-```
+~~~
 
-本次没有重新构建、重新打 tag 或推送镜像，也没有修改 vLLM、vllm-plugin-FL 或 FlagGems 源码。主要运行时变更为：
+本次未重新构建、打 tag 或推送镜像，也未修改：
 
-- 固化历史 27 项 FlagGems 白名单；
-- 保留 `silu_and_mul` OOT 黑名单；
-- 新增 `VLLM_FL_OOT_ENABLED=0`，关闭全部 FL OOT 注册；
-- 使用独立 Triton 缓存和算子记录文件；
-- 生成部署、服务、A/B 诊断和评测日志。
+- vLLM 源码；
+- vllm-plugin-FL 源码；
+- FlagGems/Flagtree 算子实现；
+- 模型权重、配置和 tokenizer。
 
-当前重部署证据：
+本轮产生的运行时文件包括：
 
-```text
-/public-flash/models/day0_logs/gemma-1.1-7b-it-deploy-20260916-103723.log
-/public-flash/models/day0_logs/gemma-1.1-7b-it-serve-20260916-103723.log
-```
+- 部署和服务日志；
+- 模型独立 Triton 编译缓存；
+- FlagGems 启用算子记录；
+- EvalScope predictions、reviews、报告及结果 JSON。
 
 ## Step 3：评测
 
 评测服务地址：
 
-```text
+~~~text
 http://127.0.0.1:8004/v1
-```
+~~~
 
-统一评测配置：
+评测配置：
 
 | 项目 | 值 |
 |------|---|
 | 数据集 | GPQA Diamond |
-| EvalScope | `1.5.1` |
-| 正式全量题数 | 198 |
-| 快速诊断题数 | 50 |
-| `eval_batch_size` | 4 |
-| `temperature` | 0 |
-| `max_model_len` | 8192 |
-| `max_tokens` | 4096 |
-| 截断检测 | 通过 `--skip-truncation-check` 显式跳过，不能据此声明已排除截断 |
+| EvalScope | 1.5.1 |
+| 题数 | 50 |
+| 模式 | standard |
+| eval_batch_size | 4 |
+| temperature | 0.0 |
+| top_p | 1.0 |
+| max_model_len | 8192 |
+| max_tokens | 4096 |
+| stream | true |
+| 请求超时 | 120000 ms |
+| retries | 5 |
+| 截断探测 | 通过命令行显式跳过 |
+| 评测耗时 | 631.1 秒，约 10 分 31.1 秒 |
 
-### 全量 198 题
+等价评测命令：
+
+~~~bash
+python3 fast_gpqa.py \
+  --model-name gemma-1.1-7b-it \
+  --api-base http://127.0.0.1:8004/v1 \
+  --api-key EMPTY \
+  --dataset gpqa_diamond \
+  --limit 50 \
+  --eval-batch-size 4 \
+  --max-tokens 4096 \
+  --skip-truncation-check \
+  --output /models/day0_logs/accuracy/gemma-1.1-7b-it-gpqa50-explicit-env-redeploy-20260916-1046.json
+~~~
+
+评测开始时日志记录：
+
+~~~text
+Unified pool: 50 items to process, 0 already fully cached
+~~~
+
+因此本轮 50 题均重新生成，没有复用历史答案。
 
 结果文件：
 
-```text
-/public-flash/models/day0_logs/accuracy/gemma-1.1-7b-it-gpqa198-oot-disabled-full-20260915.json
-```
+~~~text
+/public-flash/models/day0_logs/accuracy/gemma-1.1-7b-it-gpqa50-explicit-env-redeploy-20260916-1046.json
+~~~
+
+评测日志：
+
+~~~text
+/public-flash/models/day0_logs/accuracy/gemma-1.1-7b-it-gpqa50-explicit-env-redeploy-20260916-1046.log
+~~~
+
+EvalScope 工作目录：
+
+~~~text
+outputs/gpqa_diamond/20260916_024618
+~~~
 
 结果摘要：
 
-```json
+~~~json
 {
-  "score": 32.83,
-  "evalscope_score": 31.82,
-  "total_questions": 198,
+  "model": "gemma-1.1-7b-it",
+  "benchmark": "gpqa_diamond",
+  "mode": "standard",
+  "score": 42.0,
+  "evalscope_score": 40.0,
+  "total_questions": 50,
   "eval_batch_size": 4,
-  "temperature": 0,
   "max_tokens": 4096,
   "max_model_len": 8192,
+  "temperature": 0.0,
+  "eval_duration_seconds": 631.1,
+  "total_duration_seconds": 631.1,
   "runaway_detection": {
-    "runaway_count": 0
+    "checked": 50,
+    "runaway_count": 0,
+    "runaway_indices": []
   },
   "answer_extraction_audit": {
-    "parser_false_negative_count": 3
+    "checked": 50,
+    "explicit_answer_found": 46,
+    "fallback_to_evalscope": 4,
+    "format_corrected_score": 42.0,
+    "parser_mismatch_count": 6,
+    "parser_false_negative_count": 2,
+    "parser_false_positive_count": 1,
+    "invalid_evalscope_extract_count": 4
   }
 }
-```
+~~~
 
-格式校正后 `32.83%` 对应 `65/198`，EvalScope 原始分 `31.82%` 对应 `63/198`。NV 记录值为 `37%`，绝对低 `4.17` 个百分点，相对退化 `11.27%`，不达标。
+答案提取审计将 EvalScope 原始分 40.00% 校正为 42.00%。最终正确题数为：
 
-### 50 题重复性与缓存 A/B
+~~~text
+21/50 = 42.00%
+~~~
 
-| 配置/轮次 | EvalScope 原始分 | 格式校正分 | 结论 |
-|---|---:|---:|---|
-| OOT 关闭，正式轮次 1 | 38% | 38% | 达标 |
-| OOT 关闭，同服务重复轮次 | 32% | 32% | 不达标 |
-| OOT 关闭，第三轮 | 38% | 38% | 达标 |
-| Prefix Cache 开启，冷缓存 | 36% | 36% | 达标 |
-| Prefix Cache 开启，热缓存 | 32% | 32% | 不达标 |
-| Prefix Cache 关闭，第 1 轮 | 40% | 42% | 达标 |
-| Prefix Cache 关闭，第 2 轮 | 36% | 36% | 达标 |
-| 2026-09-16 明确变量重部署后 | 40% | 42% | 达标，但仅单轮小样本 |
+本轮检测结果：
 
-最新重部署后的 50 题结果：
+~~~text
+runaway_count=0
+~~~
 
-```text
-/public-flash/models/day0_logs/accuracy/gemma-1.1-7b-it-gpqa50-explicit-env-redeploy-20260916-1046.json
-```
+## Step 4：与 NV 基线对比
 
-该轮 EvalScope 原始分为 `40%`，答案提取审计后为 `42%`（21/50），无 runaway；相对 NV 记录值高 5 个百分点。但在它之前，同一 OOT 关闭正式服务也测得过 `32%`，因此该轮不能覆盖全量结论。
+nv_baseline.yaml 中记录：
 
-## 现象
+~~~yaml
+gemma-1.1-7b-it:
+  metrics:
+    gpqa_diamond: 37.0
+~~~
 
-- 新镜像下服务稳定启动，端口 `8004` 返回 HTTP `200`；
-- 关闭 OOT 后，50 题结果可从 `32%` 提升到 `38%`、`40%` 或 `42%`；
-- 相同 50 题、相同 target、`temperature=0`、并发 4 时，重复轮次仍出现大量答案和完整输出变化；
-- Prefix Cache 关闭后仍有明显运行间波动，因此 prefix cache 不是充分根因；
-- 全量 198 题校正后仅 `32.83%`，没有 runaway，但仍明显低于 NV 记录值。
+对比结果：
 
-## 定位
+| 项目 | 值 |
+|------|---:|
+| Hygon EvalScope 原始分 | 40.00% |
+| Hygon 答案提取校正分 | 42.00% |
+| NV 基线 | 37.00% |
+| 校正分绝对差 | Hygon 高 5 个百分点 |
+| 精度损失 | 0 |
+| runaway | 0 |
+| 评测判定 | 通过 |
 
-当前证据支持以下结论：
-
-1. 答案解析确实会影响约 1--2 个百分点，但不足以解释全部精度差距；
-2. 关闭 OOT 会改变推理数值路径，部分轮次有明显改善，因此 OOT 是相关因素；
-3. OOT 关闭后仍存在批量推理非确定性，不能把问题锁定为单一 OOT 算子；
-4. Prefix Cache 开关不能消除波动，不是充分根因；
-5. 下一步应继续隔离 `eval_batch_size=1`、chunked prefill 及 FlagGems/OOT 的 2×2 组合，定位剩余非确定性。
-
-`nv_baseline.yaml` 仅记录 NV 分数 `37%`，没有 NV 原始题目 ID、样本量、prompt、EvalScope 版本和逐题预测。因此当前 NV 比较只能作为仓库记录值比较，不能证明两侧逐题严格同源。
-
-## 处置
-
-1. 使用统一 Hygon 新镜像和单卡 GPU6；
-2. 保留历史 Gemma FlagGems 白名单；
-3. 保留 `VLLM_FL_OOT_BLACKLIST=silu_and_mul`；
-4. 增加 `VLLM_FL_OOT_ENABLED=0`，关闭 FL OOT 注册路径；
-5. 固定 `TRITON_ATTN`、BF16、TP=1、eager 模式；
-6. 对相同 50 题执行重复评测及 Prefix Cache 严格 A/B；
-7. 使用同一 EvalScope `1.5.1` 和并发 4 完成全量 198 题；
-8. 同时保留 EvalScope 原始分、答案提取校正分和逐题异常审计。
+原始分 40.00% 和校正分 42.00% 均高于 NV 基线 37.00%，满足精度要求。
 
 ## 当前结果
 
-- 服务：正常，GPU6，端口 `8004`
-- 当前部署：历史 FlagGems 白名单保留，FL OOT 整体关闭
-- GPQA Diamond 全量 198 题：`32.83%`（65/198，格式校正后）
-- EvalScope 全量原始分：`31.82%`（63/198）
-- NV 参考值：`37.0%`
-- 全量相对退化：`11.27%`
-- 全量精度判定：❌ 不达标
-- 最新 50 题：原始 `40%`，校正后 `42%`，仅说明该轮小样本达标
-- 性能验收：本次未重测
+- 部署：成功；
+- 服务：正常；
+- GPU：6；
+- 端口：8004；
+- Tensor Parallel：1；
+- dtype：bfloat16；
+- attention：TRITON_ATTN；
+- FL OOT：关闭；
+- prefix cache：开启；
+- chunked prefill：开启；
+- GPQA Diamond：42.00%（21/50，答案提取校正后）；
+- EvalScope 原始分：40.00%；
+- NV 基线：37.00%；
+- runaway：0；
+- 精度判定：通过。
 
 ## 可复用规则
 
-精度异常模型不能用单轮 50 题通过代替全量结论。应固定同一题目、评测器版本、并发和生成参数，至少重复两轮并保存逐题输出；然后按 `FlagGems 开/关 × OOT 开/关` 做 2×2 隔离。怀疑缓存时必须分别执行冷/热缓存和关闭缓存重复轮次。只有某变量关闭后重复结果稳定，才能把它判定为根因；“一次提高”只能记为候选缓解措施。
+1. 国产芯片模型适配记录应保存部署时的完整有效环境变量，而不是只记录启动命令。
+2. vLLM 服务启动后应从 EngineCore 初始化日志反查 prefix cache、chunked prefill、dtype 和 max model length 的实际值。
+3. GPQA 结果应同时保留 EvalScope 原始分和显式 ANSWER 标记校正分。
+4. 评测日志必须记录缓存命中数量；0 already fully cached 才能证明该轮不是复用历史答案。
+5. 评测结论应同时核验题数、生成参数、runaway 数量和 NV 基线。

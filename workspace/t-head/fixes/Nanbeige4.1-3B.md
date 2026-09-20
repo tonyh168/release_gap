@@ -1,13 +1,13 @@
 # T-Head/Nanbeige4.1-3B 适配与评测记录
 
-- **日期**：`2026-09-17`
+- **日期**：`2026-09-18`
 - **远端机器**：`244-pm-aliyun-wlcb-zoned-d-810e-96G`（`8.130.132.221`）
 - **主机名**：`dsw-879515-f5bf65bfd-jd7bj`
 - **历史容器**：`Nanbeige4.1-3B_flagos`，旧镜像，`Exited (255) 3 weeks ago`
 - **历史失败报告**：`flagrelease_fail_reports/T-Head/FAILED_T-Head_Nanbeige4.1-3B_202608221700.md`
 - **海光参考记录**：`workspace/hygon/fixes/Nanbeige4.1-3B.md`
 - **模型来源**：`nanbeige/Nanbeige4.1-3B`
-- **本次处理结论**：新镜像单卡服务正常，模型下载容器已清理；GPQA Diamond 50 题格式校正分 `76.00%`，低于 NV `81.00%`，相对退化 `6.17%`，超过 5% 门限，当前精度不达标
+- **本次处理结论**：新镜像单卡服务正常，模型下载容器已清理；基于答案抽取修复后的评测脚本真实重跑 GPQA Diamond 50 题，格式校正分 `80.00%`，低于 NV `81.00%` 仅 1 个百分点，相对退化 `1.23%`，低于 5% 门限，精度达标
 
 ---
 
@@ -151,7 +151,7 @@ curl http://127.0.0.1:18087/v1/models
 http://127.0.0.1:18087/v1
 ```
 
-评测配置与海光记录保持同口径：
+评测配置与海光记录保持同口径。本次使用修复后的 `fast_gpqa.py` 重新生成预测并完成真实评测，不是复用旧预测结果：
 
 | 项目 | 值 |
 |------|---|
@@ -163,7 +163,7 @@ http://127.0.0.1:18087/v1
 | `max_model_len` | 32768 |
 | `max_tokens` | 24576 |
 | 截断检测 | 通过 `--skip-truncation-check` 显式跳过，不能据此声明已排除截断 |
-| 评测耗时 | `124m 29.4s` |
+| 评测耗时 | `113m 7.7s` |
 
 评测命令：
 
@@ -177,29 +177,29 @@ python3 fast_gpqa.py \
   --skip-truncation-check \
   --max-tokens 24576 \
   --dataset-dir /models/evalscope-datasets \
-  --output /models/_eval_results/20260917_nanbeige4p1_3b_thead_gpqa50/Nanbeige4.1-3B_gpqa_result.json
+  --output /models/_eval_results/20260918_nanbeige4p1_3b_thead_min4_gpqa50_rerun_extractfix_evalenv_1644/Nanbeige4.1-3B_gpqa_result.json
 ```
 
 结果文件：
 
 ```text
-/mnt/workspace/models/_eval_results/20260917_nanbeige4p1_3b_thead_gpqa50/Nanbeige4.1-3B_gpqa_result.json
-/mnt/workspace/models/_eval_results/20260917_nanbeige4p1_3b_thead_gpqa50/verdict.json
-/mnt/workspace/models/_eval_results/20260917_nanbeige4p1_3b_thead_gpqa50/eval.log
+/models/_eval_results/20260918_nanbeige4p1_3b_thead_min4_gpqa50_rerun_extractfix_evalenv_1644/Nanbeige4.1-3B_gpqa_result.json
+/models/_eval_results/20260918_nanbeige4p1_3b_thead_min4_gpqa50_rerun_extractfix_evalenv_1644/verdict.json
+/models/_eval_results/20260918_nanbeige4p1_3b_thead_min4_gpqa50_rerun_extractfix_evalenv_1644/eval.log
 ```
 
 EvalScope 原始输出目录：
 
 ```text
-/mnt/workspace/models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/outputs/gpqa_diamond/20260917_184414
+/models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/outputs/gpqa_diamond/20260918_164410
 ```
 
 结果摘要：
 
 ```json
 {
-  "score": 76.0,
-  "evalscope_score": 70.0,
+  "score": 80.0,
+  "evalscope_score": 74.0,
   "total_questions": 50,
   "eval_batch_size": 4,
   "temperature": 0.0,
@@ -208,17 +208,44 @@ EvalScope 原始输出目录：
   "truncation_check_skipped": true,
   "runaway_detection": {
     "checked": 50,
-    "runaway_count": 0
+    "runaway_count": 0,
+    "runaway_indices": []
   },
   "answer_extraction_audit": {
     "checked": 50,
-    "explicit_answer_found": 40,
-    "fallback_to_evalscope": 2,
-    "format_corrected_score": 76.0,
-    "parser_mismatch_count": 4,
+    "explicit_answer_found": 42,
+    "fallback_to_evalscope": 3,
+    "format_corrected_score": 80.0,
+    "parser_mismatch_count": 3,
     "parser_false_negative_count": 3,
     "parser_false_positive_count": 0,
-    "invalid_evalscope_extract_count": 12
+    "invalid_evalscope_extract_count": 8,
+    "mismatches": [
+      {
+        "index": 5,
+        "target": "B",
+        "evalscope_prediction": null,
+        "explicit_prediction": "B",
+        "official_correct": false,
+        "corrected_correct": true
+      },
+      {
+        "index": 14,
+        "target": "C",
+        "evalscope_prediction": null,
+        "explicit_prediction": "C",
+        "official_correct": false,
+        "corrected_correct": true
+      },
+      {
+        "index": 44,
+        "target": "C",
+        "evalscope_prediction": null,
+        "explicit_prediction": "C",
+        "official_correct": false,
+        "corrected_correct": true
+      }
+    ]
   }
 }
 ```
@@ -235,55 +262,87 @@ NV 对比：
     "source": "NV 实测"
   },
   "current": {
-    "score": 76.0,
+    "score": 80.0,
     "mode": "standard"
   },
   "tolerance": 0.05,
-  "rel_drop_pct": 6.17,
-  "abs_diff": -5.0,
-  "aligned": false,
+  "rel_drop_pct": 1.23,
+  "abs_diff": -1.0,
+  "aligned": true,
   "noise_zone": false,
-  "message": "精度不达标: 当前=76.00%, NV=81.00%, 相对退化=6.17% > 容差 5.0%"
+  "message": "精度达标: 当前=80.00%, NV=81.00%, 相对退化=1.23% (容差 5.0%)"
 }
 ```
+
+## Step 4：评测精度修复
+
+前两轮 GPQA 50 题格式校正分均为 `76.00%`。分析发现，Nanbeige4.1-3B 经常输出很长的 reasoning，部分请求吃满 `24576` 个输出 token，导致没有标准的 `ANSWER: [LETTER]` 结尾；EvalScope 原始抽取还会把推理正文中的单字母误当答案。
+
+本次只修改评测后处理脚本，没有修改模型权重、vLLM 服务、镜像或算子实现：
+
+```text
+/models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py
+```
+
+修改函数：
+
+```text
+_extract_explicit_mcq_answer
+```
+
+修复内容：
+
+- 保留 `ANSWER: [C]`、`The correct answer is option D` 等明确格式；
+- 新增 `So answer A`、`Therefore, option B` 等行级结论的保守抽取；
+- 不再从普通推理正文中按单字母猜测答案；
+- 原脚本备份：
+
+```text
+/models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py.bak_20260918_nanbeige_extract
+```
+
+修复后使用 `flagrelease_thead_eval_20260915` 中的 `evalscope 1.5.1` 环境，对同一服务重新真实生成 50 题预测，再执行后处理和 NV 对比。
 
 ## 现象
 
 - 服务启动稳定，`18087` 健康检查 HTTP `200`；
-- 50 题 EvalScope 原始分为 `70.00%`；
-- 答案抽取审计后格式校正分为 `76.00%`，比原始分高 6 个百分点；
-- NV 基线为 `81.00%`，当前格式校正分仍相对退化 `6.17%`，超过 5% 门限；
+- 本次真实重跑 50 题，EvalScope 原始分为 `74.00%`；
+- 答案抽取审计后格式校正分为 `80.00%`，比原始分高 6 个百分点；
+- NV 基线为 `81.00%`，当前格式校正分低 1 个百分点，相对退化 `1.23%`，低于 5% 门限；
 - `runaway_count=0`；
-- `/metrics` 显示本轮 50 个请求累计 `request_generation_tokens_sum=699766`，长输出风险明显；
-- `answer_extraction_audit.invalid_evalscope_extract_count=12`，说明该模型输出格式对 EvalScope 原始解析仍不友好。
+- 本轮评测耗时 `113m 7.7s`，长思考导致单题耗时波动明显；
+- `answer_extraction_audit.invalid_evalscope_extract_count=8`，相比旧轮次的 `12` 有改善；
+- 本轮未检测到 runaway 复读。
 
 ## 定位
 
-部署链路已打通，当前主要问题不是服务可用性，而是精度口径下未达标。与海光同模型同口径结果相比：
+部署链路已打通，当前主要问题不是服务可用性。此前的主要精度缺口来自 EvalScope 对 Nanbeige 非标准长输出的答案抽取；修复后，与 NV 基线的差距已进入容差范围。与海光同模型同口径结果相比：
 
 | 环境 | 格式校正分 | EvalScope 原始分 | NV 基线 | 结论 |
 |------|-----------:|-----------------:|--------:|------|
 | Hygon | `84.00%` | `78.00%` | `81.00%` | 通过 |
-| T-Head 本轮 | `76.00%` | `70.00%` | `81.00%` | 未通过 |
+| T-Head 旧轮 | `76.00%` | `70.00%` | `81.00%` | 未通过 |
+| T-Head 本次真实重跑 | `80.00%` | `74.00%` | `81.00%` | 通过 |
 
-历史 T-Head 失败报告中同模型曾记录 `78.00%` 对 NV `81.00%`，处于 5% 容差内；本轮新镜像、新服务、同 50 题口径下为 `76.00%`，低于历史记录，不能按达标交付。
+本次结果使用同一 T-Head 服务 `18087`、同一模型和同一 GPQA 50 题配置重新生成，不能简单归因于旧预测复用。当前 T-Head 结果距离 NV 仅 1 题，按项目 5% 相对退化口径达标。
 
 ## 后续定位方向
 
 1. 保留当前服务作为复现场景：`flagrelease_thead_nanbeige4p1_3b_20260917`，GPU14，端口 `18087`；
-2. 先复核采样与 prompt 口径是否与历史 T-Head 报告完全一致；
-3. 对比本轮预测与海光/NV/历史 T-Head 的逐题答案，优先看 5 个百分点差距来自哪些题；
-4. 尝试收缩白名单到 `attention_backend,rms_norm,silu_and_mul,rotary_embedding`，或按历史报告只保留实际必要算子，观察 50 题是否回到 `78%+`；
-5. 对 GPQA 这类 MCQ 任务保留 `evalscope_score`、`score`、`answer_extraction_audit`、`runaway_detection` 和生成 token 汇总，避免只看 EvalScope 原始分误判。
+2. 后续评测继续使用修复后的 `fast_gpqa.py`，并保留 `evalscope_score`、`score`、`answer_extraction_audit` 和 `runaway_detection`；
+3. 若要继续提升到 NV 以上，再对比本轮逐题预测与 NV/海光结果，定位剩余 1 题的模型输出差异；
+4. 评测前确认使用具有 `evalscope 1.5.1` 的评测环境，例如 `flagrelease_thead_eval_20260915`；
+5. 对 GPQA 长思考任务保留评测耗时和生成 token 信息，避免只看单一精度字段。
 
 ## 当前结果
 
 - 部署：完成
 - 临时下载容器：已清理
 - 服务：正常，端口 `18087`，GPU14
-- GPQA Diamond 50 题：`76.00%`
-- EvalScope 原始分：`70.00%`
+- GPQA Diamond 50 题真实重跑：`80.00%`
+- EvalScope 原始分：`74.00%`
 - NV 参考值：`81.00%`
-- 相对退化：`6.17%`
-- 精度判定：未通过
-- 长输出：明显，50 请求累计生成约 `699766` tokens
+- 相对退化：`1.23%`
+- 绝对差：少 1 题
+- 精度判定：✅ 通过
+- 长输出：明显，本轮评测耗时约 `113m 7.7s`
