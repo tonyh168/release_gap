@@ -68,6 +68,50 @@
   厂商镜像的 vllm 安装路径也可能不同（摩尔在 `/usr/local/bin/vllm`，其余厂商是 `/opt/conda/bin/vllm`）。
   **来源**：mthreads `flagrelease_mthreads-gmi_vllm024plugin_base:08281629` 实测（2026-09-20）
 
+- **现象**：摩尔起服务时 vLLM 打告警 `Unknown vLLM environment variable detected: VLLM_FL_FLAGOS_WHITELIST`，
+  容易误判为「白名单没生效」。
+  **根因**：vLLM 只校验自己的 `VLLM_*` 命名空间，`VLLM_FL_FLAGOS_WHITELIST` 是 plugin-FL 读的，vLLM 不认识就报一句。
+  **处置**：**忽略该告警**。验证白名单是否真生效，看 EngineCore 里这几行即可（有几个算子就该有几行，不多不少）：
+  ```
+  [INFO] [vllm_fl.dispatch.manager] Op 'rms_norm'         using 'default.flagos'
+  [INFO] [vllm_fl.dispatch.manager] Op 'rotary_embedding' using 'default.flagos'
+  [INFO] [vllm_fl.dispatch.manager] Op 'silu_and_mul'     using 'default.flagos'
+  ```
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：摩尔起服务日志里有整段 traceback：`RuntimeError: Cannot re-initialize MUSA in forked subprocess.
+  To use MUSA with multiprocessing, you must use the 'spawn' start method`，但服务**照样正常起来**。
+  **根因**：报错发生在 `vllm/usage/usage_lib.py` 的**用量上报**路径——它 fork 子进程去读设备属性，
+  撞上 torch_musa 的 "MUSA 不能在被 fork 的子进程里重新初始化" 检查。
+  **处置**：①**别当成启动失败**——只要最终有 `Application startup complete` 就是好的；
+  ②日志分析脚本**不要按 `Traceback` 关键字判死**，摩尔日志里这条是常态；
+  ③想消掉噪声用 `VLLM_NO_USAGE_STATS=1`（或 `DO_NOT_TRACK=1`）。
+  **注意**：`VLLM_WORKER_MULTIPROC_METHOD=spawn` **挡不住**这条——触发点不是 worker 而是上报路径。
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：摩尔起服务时告警 `patch_moe_topk_softmax_for_musa: cannot import topk_softmax_flaggems —
+  MoE models will fail on MUSA`，以及 `Failed to register Reference operators: 'ReferenceBackend' object
+  has no attribute 'moe_align_block_size'`。
+  **根因**：plugin-FL 给 MUSA 打的 MoE 补丁拿不到 FlagGems 的 `topk_softmax` 实现（模块循环导入）。
+  **处置**：**dense 模型无影响**（Phi-4-reasoning-plus 实测正常）。**MoE 模型要重点验证**——
+  摩尔失败清单里的 MoE：`gpt-oss-20b`、`Moonlight-16B-A3B-Instruct`、`Qwen3-30B-A3B-Instruct-2507`、
+  `kanana-1.5-15.7b-a3b-instruct`、`LFM2-2.6B-Exp`（MoE 版）。
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：`Phi-4-reasoning-plus`、`Magistral` 这类 reasoning 模型评测时被当成普通模型（贪心 + 小 max_tokens）。
+  **根因**：`fast_gpqa.py` 的 `THINKING_PATTERNS` 是**关键词白名单**（`qwen3`/`qwq`/`deepseek-r1`/`deepseek-r2`/
+  `light-r1`/`minicpm4.1`/`mimo`/`hunyuan`），**名字里没有这些词的 reasoning 模型一律识别不出来**。
+  Phi-4-reasoning-plus 实测输出带 `<think>`，但不在名单里。
+  **处置**：靠 `context.yaml` 显式标记（优先级高于关键词）：
+  ```yaml
+  model:
+    local_path: <容器内模型目录>
+    thinking_model: true
+  ```
+  注意该文件路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`——容器没挂 `/flagos-workspace` 时
+  要在容器内建同路径目录。
+  **来源**：mthreads/Phi-4-reasoning-plus 服务冒烟（2026-09-20）；同类问题曾见于 hygon/Magistral-Small-2506
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）

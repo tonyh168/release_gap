@@ -14,7 +14,7 @@
 | 镜像 pull + 版本实测 | ✅ 已完成（41 层 / 13.88 GiB；vllm 0.24.0 / plugin-FL 0.3.0 / FlagGems 5.3.2 / Flagtree 0.6.0 / torch 2.9.0 / 驱动 3.3.5-server） |
 | 共享盘路径勘察 | ✅ `/datapool`（无 `/public-flash`） |
 | 项目目录建立 | ✅ `/datapool/flagrelease/{fixes_models,release_run_logs}`（25 建、27 已验证可见） |
-| 容器起服务冒烟（真起一次 vllm serve） | ⬜ 未做——镜像/卡/挂载已验证，但**尚未真正拉起过服务** |
+| **SOP 端到端验证（起服务冒烟）** | ✅ **已完成** —— `Phi-4-reasoning-plus` 首跑即通（63 秒起服务，短/长 prompt 均 200） |
 | `mthreads-26` 可用性 | ❌ 待发起人确认（bastion 报 `match asset failed: No found asset`） |
 | evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
 | 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
@@ -55,7 +55,7 @@
 | AceReason-Nemotron-7B | mmlu 70.72 / math_500 95.2 | 📋 待开始 | 会话在服务启动前因 API 流式卡顿中断 |
 | Hermes-2-Pro-Llama-3-8B | gpqa_diamond 33 | 📋 待开始 | 权重下载命令超时 |
 | Ministral-3-14B-Instruct-2512 | gpqa_diamond 56 | 📋 待开始 | 容器准备未完成 |
-| Phi-4-reasoning-plus | gpqa_diamond 46 | 📋 待开始 | 容器准备未完成 |
+| Phi-4-reasoning-plus | gpqa_diamond 46 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU0/:8000，63s 起服务，短+长 prompt 冒烟均 200）；待评测。⚠ 评测前须补 `context.yaml`（thinking 模型 + 采样参数，见修复日志） |
 | Qwen2.5-7B-Instruct | gpqa_diamond 39.0 | 📋 待开始 | 会话连接中断 |
 | Qwen2.5-Coder-7B-Instruct | gpqa_diamond 27 | 📋 待开始 | 会话连接中断 |
 | aya-23-8B | gpqa_diamond 27 | 📋 待开始 | 容器准备未完成 |
@@ -137,9 +137,19 @@
 
 ## 当前进度快照
 
-> 更新：2026-09-20
+> 更新：2026-09-20 14:20
 
 - **精度已通过**：0 / 50（3 个模型在流水线侧已达标，待复核确认后计入）
 - **精度不达标**：0 / 50
+- **服务已起/冒烟通过**：1 / 50（`Phi-4-reasoning-plus` 🟢 —— SOP 端到端验证成功）
 - **评测进行中**：0 / 50
-- **待开始**：50 / 50 —— 本目录已初始化，等第一次上机
+- **待开始**：49 / 50
+
+### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
+
+| 模型 | 大小 | 状态 |
+|------|------|------|
+| Phi-4-reasoning-plus | 28 GB | ✅ 完成 |
+| LFM2.5-1.2B-Thinking | 2.2 GB | ✅ 完成 |
+| reka-flash-3 | 39 GB | ✅ 完成 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 51.75 GB | 🟡 下载中 |
