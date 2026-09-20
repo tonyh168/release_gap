@@ -42,6 +42,32 @@
   **处置**：`.out` 变体一律写下划线；graph 模式黑名单需补全 `mm,mm_out,bmm,bmm_out,linear,...`，把 GEMM 挡回原生 aten。
   **来源**：metax/XingChen4-0907
 
+- **现象**：摩尔线程上 `import vllm` 直接崩，native（不开任何 flagos 组件）基线也起不来：
+  `AttributeError: module 'torch' has no attribute 'float4_e2m1fn_x2'`，栈在 `vllm/ir/tolerances.py:32`。
+  **根因**：vllm 0.20.2 的 `vllm/ir/tolerances.py` 在**模块导入期**就把 `torch.float4_e2m1fn_x2` 写进
+  `DEFAULT_TOLERANCES` 字典的 key，而 torch 2.7.1 / torch_musa 未提供该 dtype；导入即 AttributeError，
+  与模型无关，整台机器上所有 vllm 0.20.2 服务都受影响。
+  **处置**：①换 vLLM 0.24.0 口径的镜像（0.24 不再于导入期引用该 dtype）；②或临时 patch `tolerances.py`
+  去掉该 key / 改成惰性引用；③已提 issue 到 `flagos-ai/vllm-plugin-FL`（类型 startup-crash），
+  要求对 torch_musa 缺失的 float4 dtype 做兼容或延迟引用。
+  **来源**：mthreads/AceMath-RL-Nemotron-7B、mthreads/Darwin-28B-Opus、mthreads/Qwen3-4B-SafeRL（2026-08）
+
+- **现象**：摩尔线程上「服务启动失败 + 精度不达标 + 性能不达标」三类同时出现在同一份报告里（50 份报告里 8 份这样写）。
+  **根因**：报告判定粒度粗——流程中途失败时，未执行的阶段被填了默认占位判定，不代表三项独立都失败。
+  **处置**：**别按报告结论的条数分配工时**；先看该报告有没有真实评测数据（`accuracy_compare_*.json` / benchmark 结果），
+  没有数据的按「从未评测过」处理，用本工作区 SOP 重跑一遍即可定性。
+  **来源**：mthreads 50 份报告聚类（其中 7 份明确是流程会话/容器准备中断，非芯片问题）
+
+- **现象**：把其他厂商的 `GEMS_VENDOR=<厂商>` + `VLLM_PLUGINS=fl` 口径照搬到摩尔，起服务时没有生效（或困惑于该设哪个）。
+  **根因**：**摩尔这套镜像是 plugin-FL 的 dispatch 机制，不走 `GEMS_VENDOR`**。实测（`vllm_fl/utils.py` + 镜像
+  `docker inspect`）：`VLLM_PLUGINS=fl` 已**内置**在镜像 ENV 里（启动即打印 `Platform plugin fl is activated`），
+  真正的开关是 `VLLM_FL_PREFER_ENABLED`（全局，默认 true）和 `USE_FLAGGEMS`（FlagGems，**默认 true = 已开**），
+  算子粒度用 `VLLM_FL_FLAGOS_WHITELIST` / `VLLM_FL_FLAGOS_BLACKLIST`。
+  **处置**：摩尔不要写 `GEMS_VENDOR`、不要重复 export `VLLM_PLUGINS`；要关 FlagGems 用 `USE_FLAGGEMS=0`。
+  **通用教训**：**换厂商镜像时先读容器内 plugin 的 README/源码确认开关变量名**，别按上一家的惯例抄——
+  厂商镜像的 vllm 安装路径也可能不同（摩尔在 `/usr/local/bin/vllm`，其余厂商是 `/opt/conda/bin/vllm`）。
+  **来源**：mthreads `flagrelease_mthreads-gmi_vllm024plugin_base:08281629` 实测（2026-09-20）
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）
@@ -102,6 +128,24 @@
   `≥20k` 长响应档正确率 **12.5% → 36.7%**。
   **来源**：metax/reka-flash-3（2026-09-18；注：此问题影响本项目**全部 10 个模型**的历轮评测，
   只是多数模型本就该贪心评测而未暴露）
+
+- **现象**：摩尔线程上「精度不达标」和「性能不达标」成对出现（17 个精度不达标里 16 个同时报性能不达标），
+  且全部集中在开满 FlagGems 全量算子（约 51–62 个）的 V2/V3 阶段。
+  **根因**：尚未定位到单一算子——现象上更像「全量算子替换在摩尔后端上整体偏慢 + 数值路径偏差」的叠加。
+  **处置**：摩尔侧首轮**不要开全量**。先按 `VLLM_FL_FLAGOS_WHITELIST=silu_and_mul,rms_norm,rotary_embedding`
+  这类安全集跑通并出分，再按「精度优先」逐步放开；一旦出现吞吐骤降或分数下掉，就把该算子退回。
+  （Hygon/Qwen2.5-7B-Instruct 已验证该安全集可用；摩尔待实测。）
+  **来源**：mthreads 50 份报告聚类（DASD-4B-Thinking、GLM-4.7-Flash、LFM2-2.6B-Exp、Light-R1-14B-DS、
+  Moonlight-16B-A3B-Instruct、OpenMath-Nemotron-14B-Kaggle、Qwen3-4B-SafeRL、VibeThinker-1.5B、ZR1-1.5B、
+  gemma-3-1b-it、gpt-oss-20b、llama-3-Korean-Bllossom-8B、phi-4、reka-flash-3、rnj-1-instruct、Dhanishtha-2.0-preview）
+
+- **现象**：摩尔线程上 FlagGems 使能后 mmlu 评测**生成失控（runaway）**，模型不复读却停不下来，
+  精度无法评测（FluentlyQwen2.5-32B，V2 镜像 `…vllm0.24.0…plugin0.3.0…:202609050940-v2`）。
+  **根因**：报告未定位到算子（同模型另提了 accuracy degradation + performance degradation 两个 issue）；
+  评测侧也无法用 runaway 分数判定达标。
+  **处置**：先收窄算子白名单重跑；同时固定 `--max-tokens` 与 `--eval-batch-size`，把 `runaway_count`
+  和 `truncation_detected` 当准入条件——两项非零时不采信分数。
+  **来源**：mthreads/FluentlyQwen2.5-32B（2026-09-05）
 
 ---
 
@@ -171,3 +215,16 @@
 - **`max_tokens` 无法通过 CLI 指定**（脚本设计禁止，由 `auto_max_tokens()` 按
   `max_model_len - 8192` 自适应，且截断检测还会自动翻倍）。需间接控制时，
   调**服务端 `--max-model-len`** 即可：如要 max_tokens=16384，就把 `--max-model-len` 设为 24576。
+
+- **引用历史报告的"性能比"前先确认基线来源**：摩尔线程的报告里大量出现
+  `baseline_source: v2_initial_x1.2`（用 V2 初始性能 ×1.2 合成 V1 基线），
+  Phi-3.5-mini 等报告明确标注"性能基线为合成值，非实测 V1"。
+  这类比值只能当参考，**不能当达标依据**；本轮判定一律以 `accuracy_compare.py` 退出码为准。
+  **来源**：mthreads/Phi-3.5-mini-instruct、Darwin-28B-Coder、iFlow-ROME 等报告
+
+- **long-CoT 模型在慢速芯片上会先撞评测预算，再谈精度**：
+  摩尔 `OpenReasoning-Nemotron-7B` 在 V2 全量算子下 mmlu 只跑到 427/1140 就到预算上限；
+  `Apodex-1.0-4B-SFT` 同样是 V2 起单题耗时显著变长后未闭环。
+  处置：显式固定 `--max-tokens` + `--eval-batch-size`（受控 A/B），必要时先只跑 `--limit 0` 的
+  小子集确认稳定性，再决定是否跑全量；不要用"跑不完"直接判芯片不达标。
+  **来源**：mthreads/OpenReasoning-Nemotron-7B、mthreads/Apodex-1.0-4B-SFT

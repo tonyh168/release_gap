@@ -5,3 +5,23 @@ iluvatar:
 thead:
 <none>
 
+mthreads:
+宿主机: mthreads-25 / mthreads-27（可用）；mthreads-26 当前不可用（bastion 报 "match asset failed: No found asset"，2026-09-20 复测两次）
+镜像: harbor.baai.ac.cn/flagrelease-public/flagrelease_mthreads-gmi_vllm024plugin_base:08281629
+      已 pull 完成（2026-09-20，mthreads-25；41 层 / 压缩 13.88 GiB）。实测版本：
+        python 3.10.12 | vllm 0.24.0 | vllm-plugin-fl 0.3.0 | flag_gems 5.3.2.post1.dev22+gb1f939eb5.d20260804
+        flagtree 0.6.0+mthreads.gitb97f8214 | torch 2.9.0 | torch_musa 2.9.0 | 驱动 3.3.5-server
+      镜像内置 ENV: VLLM_PLUGINS=fl / MTHREADS_VISIBLE_DEVICES=all / MTHREADS_DRIVER_CAPABILITIES=all
+        / VLLM_USE_MODELSCOPE=true / PYTORCH_MUSA_ALLOC_CONF=expandable_segments:True
+      镜像预装 modelscope + hf CLI（可直接下权重）；Cmd=sleep infinity；WorkDir=/sgl-workspace
+      ⚠ 无 /opt/conda，vllm 在 /usr/local/bin/vllm
+      ⚠ FlagGems 开关不用 GEMS_VENDOR，而是 USE_FLAGGEMS（默认 true）+ VLLM_FL_PREFER_ENABLED + VLLM_FL_FLAGOS_WHITELIST/BLACKLIST
+
+共享盘: 无 /public-flash。唯一跨机共享盘是 /datapool（LeoFS 网络盘，50T/剩38T/777），容器按 -v /datapool:/datapool 内外同路径挂载。
+        本项目落盘：权重 /datapool/flagrelease/fixes_models/<模型名>；日志结果 /datapool/flagrelease/release_run_logs/<模型名>/
+        另：/datapool/models 已有现成权重（aya-23-8B、Phi-3-mini-128k-instruct、Qwen2.5-7B-Instruct、gemma-1.1-7b-it 等）可省下载
+硬件: MTT S5000 × 8，单卡 81920 MiB（80GB），驱动 3.3.5-server，GPU Name PH100
+      ⚠ 宿主机上跑着别人的容器（sglang_fl_*、flagtree-*、legilla 等），用前必须 mthreads-gmi -q 复查占用
+
+待补: 25/27 上都没有 flagos-evalscope 评测镜像，也没有 release_评测标准/ 脚本（fast_gpqa.py 等）——首轮开工前需先补齐
+待验: 尚未真正拉起过一次 vllm serve（镜像/卡/挂载已验证）
