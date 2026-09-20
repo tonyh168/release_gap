@@ -1,6 +1,8 @@
 # Mthreads 模型修复状态总览
 
-> 更新：2026-09-20（环境勘察完成，尚未开工）
+> 更新：2026-09-20 17:05
+> ⚡ **当前有 4 个 50 题评测在 `mthreads-25` 后台运行中** —— 接续工作请先看 [[PROGRESS]]
+>
 > 机型：MTT S5000 × 8（单卡 80GB） | 宿主机：`mthreads-25` / `mthreads-27`（`mthreads-26` 当前不可用）
 > 镜像：`harbor.baai.ac.cn/flagrelease-public/flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
 > 共享盘：`/datapool`（LeoFS；**本机型无 `/public-flash`**）→ 权重 `/datapool/flagrelease/fixes_models/`，结果 `/datapool/flagrelease/release_run_logs/`
@@ -146,8 +148,8 @@
 - **精度不达标**：0 / 50
 - **服务已起/冒烟通过**：**4 / 50** —— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
   `reka-flash-3` / `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled`，**全部一次通过**
-- **评测进行中**：0 / 50
-- **待开始**：46 / 50
+- **评测进行中**：**4 / 50**（50 题筛查，2026-09-20 17:00 起跑，见 [[PROGRESS]]）
+- **待开始**：42 / 50
 
 ### 当前 GPU 占用（mthreads-25，2026-09-20 15:30）
 
