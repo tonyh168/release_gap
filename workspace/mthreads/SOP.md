@@ -145,10 +145,17 @@ mkdir -p /datapool/flagrelease/release_run_logs/${model_name}
 ```
 
 - 日志出现 `Application startup complete` 即就绪。
-- ⚠️ **起服务分两步：先 `--enforce-eager` 验能起，评测前必须去掉它改 graph 模式重启。**
-  metax/reka-flash-3 实测 **eager 16 tok/s vs graph 160 tok/s（差 10 倍）**，eager 下评测耗时不可接受
-  （见 `_shared/KNOWLEDGE.md` 六）。**不要用 eager 跑正式评测。**
+- ⚠️ **摩尔必须用 `--enforce-eager`，不要去掉它**（这一点与其他厂商相反）：
+  2026-09-20 实测，4 个模型去掉 `--enforce-eager` 后**全部启动失败**，报
+  `RuntimeError: MUSA driver error: operation not permitted when stream is capturing`
+  —— **MUSA 驱动不允许在 stream capture 期间分配显存**，vLLM 默认的 PIECEWISE cudagraph 做不到。
+  metax 那边「graph 160 tok/s vs eager 16 tok/s」的经验**在摩尔不适用**。
+  详见 [[KNOWLEDGE]] 六 与 `mthreads/EVAL_SETTINGS.md` 的说明。
 - **冒烟 PASS ≠ 评测能跑**：短 prompt 只走 decode，长 prompt 才走 prefill 变长注意力。起来后必须用长 prompt（直接跑几题 GPQA）验证，别只测 `1+1`。
+- ⚠️ **重启服务后先确认 GPU 内存真的释放了**：`pkill -f "vllm serve"` **杀不掉 EngineCore 子进程**，
+  残留会占着显存让新服务报
+  `ValueError: Free memory on device (7.13/79.92 GiB) on startup is less than desired GPU memory utilization`
+  —— 遇到就 `docker restart <容器>` 彻底清干净再起。
 - **起不来**：`float4_e2m1fn_x2` → 拿错镜像了，换 0.24 口径（见第 1 节）；算子编译崩 / OOM → 见 [[KNOWLEDGE]] 一。
 - ✅ **vllm 路径**：本镜像里 vllm 在 **`/usr/local/bin/vllm`**，**没有 `/opt/conda`**
   （其他厂商镜像的 `/opt/conda/bin/vllm` 口径在此不适用）。

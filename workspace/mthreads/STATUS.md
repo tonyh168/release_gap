@@ -146,19 +146,18 @@
 - **评测进行中**：0 / 50
 - **待开始**：46 / 50
 
-### 当前 GPU 占用（mthreads-25）
+### 当前 GPU 占用（mthreads-25，2026-09-20 15:30）
 
-| 卡 | 占用 | 服务 |
-|----|------|------|
-| GPU0 | 73797 MiB | Phi-4-reasoning-plus :8000 |
-| GPU1 | 73882 MiB | LFM2.5-1.2B-Thinking :8001 |
-| GPU2 | 73742 MiB | reka-flash-3 :8002 |
-| GPU3 | 73393 MiB | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled :8003 |
-| GPU4–7 | 0 MiB | **空闲（4 张）** |
+| 卡 | 服务 | 端口 | max_model_len |
+|----|------|:----:|:-------------:|
+| GPU0 | Phi-4-reasoning-plus | 8000 | 32768 |
+| GPU1 | LFM2.5-1.2B-Thinking | 8001 | 32768 |
+| GPU2 | reka-flash-3 | 8002 | **24576** |
+| GPU3 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | 32768 |
+| GPU4–7 | **空闲（4 张）** | — | — |
 
-> ⚠ 每张卡各占 73GB ≈ 90%——`--gpu-memory-utilization 0.9` 是**按卡容量预留**，与模型大小无关
-> （1.2B 的小模型也吃满 73GB）。**一模型一卡**，8 卡机最多同时跑 8 个。若要在同卡多开，
-> 必须显式下调该值。
+> 4 个服务均以 `--enforce-eager` 运行（**摩尔 graph 模式不可用**，见下方「评测前必须改的服务侧设置」），
+> 首都测试全部通过（均正确答「北京」）。评测参数总表见 [[EVAL_SETTINGS]]。
 
 ### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
 
@@ -180,12 +179,11 @@
 | **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（横比 metax / iluvatar / t-head 案例） |
 | 四个模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径）；<br>4 个全部要标 `thinking_model: true` |
 
-### ⚠ 评测前必须改的服务侧设置（来自厂商案例）
+### ⚠ 评测前必须改的服务侧设置（来自厂商案例 + 本机实测）
 
 | # | 改动 | 影响 | 依据 |
 |---|------|------|------|
-| 1 | **4 个服务全部改 graph 模式**（去掉 `--enforce-eager`） | 全部 | metax 实测 **eager 16 tok/s vs graph 160 tok/s（差 10 倍）** |
-| 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 |
+| 1 | ⚠️ **不要改 graph** —— 摩尔必须用 `--enforce-eager` | 全部 | **本机实测：去掉 `--enforce-eager` 后 4 个模型全部启动失败**（`MUSA driver error: operation not permitted when stream is capturing`）。metax 的「graph 快 10 倍」在摩尔不适用 |
+| 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 ✅ **已改** |
 | 3 | reka-flash-3 判定基准改用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定 |
-
-> 当前 4 个服务**都是 `--enforce-eager` 起的**，属冒烟验证配置，**不能直接用于正式评测**。
+| 4 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 | 3 个模型名不含关键词不会被自动识别为 thinking |

@@ -196,6 +196,28 @@
   亲手复现一份 NV 基准，并像 metax 那样**把基准取值裁定写进修复日志**。
   **来源**：metax/reka-flash-3 基准取值裁定（2026-09-19）
 
+- **现象**：⚠️ **「去掉 `--enforce-eager` 就是 graph 模式」这条经验在摩尔线程上不成立**。
+  4 个模型去掉 `--enforce-eager` 后**全部启动失败**：
+  ```
+  RuntimeError: MUSA driver error: operation not permitted when stream is capturing
+  ```
+  栈在 torch inductor 生成的代码里（`/tmp/torchinductor_root/.../xxx.py` 的
+  `buf0 = empty_strided((s72, 5120), (5120, 1), device='musa', ...)`），
+  最终表现为 `RuntimeError: Engine core initialization failed`。
+  **根因**：**MUSA 驱动不允许在 stream capture 期间分配显存**。vLLM 默认的
+  `cudagraph_mode=PIECEWISE` 需要在 capture 中对 inductor 编译产物做输出 buffer 分配，MUSA 直接拒绝。
+  这与 metax 的经验**相反**（metax/reka-flash-3 v6 用 graph 跑到 160 tok/s）。
+  **处置**：
+  1. **摩尔一律用 `--enforce-eager`**，不要照搬 metax 的 graph 口径；
+  2. 退一步的「只编译不捕获」`-cc '{"cudagraph_mode": "NONE"}'` **可启动**，
+     但实测**比 eager 更慢**（LFM2.5-1.2B：eager 3.95s vs 只编译 5.42s 跑同样的 2262+256 token），
+     **不建议**；
+  3. 想在摩尔上试 cudagraph，只能走 vLLM 的 env 逃生口 `VLLM_USE_BREAKABLE_CUDAGRAPH=1`
+     （断言里显式允许），未验证。
+  **教训**：**「graph 比 eager 快 10 倍」是 metax 的实测，不是通用规律**——CUDA graph 能不能用，
+  取决于驱动是否允许 capture 期间分配。换平台必须重新验证。
+  **来源**：mthreads 四模型实测（2026-09-20）
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）

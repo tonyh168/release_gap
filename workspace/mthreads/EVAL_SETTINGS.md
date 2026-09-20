@@ -5,11 +5,40 @@
 
 ---
 
+## ⭐ 评测参数总表（温度 / top_p / is-think）
+
+> 下表是 `fast_gpqa.py` 在补好 `context.yaml` 后**实际会用到**的参数，
+> 由 `resolve_gen_params()`（thinking 默认 → 模型 `generation_config.json` 覆盖）与
+> `auto_max_tokens()`（按服务端 `max_model_len` 反算）共同决定。
+> **`is-think` 一列**：脚本的 `THINKING_PATTERNS` 是按模型名做**子串匹配**，命中即自动按 thinking 评测。
+
+| 模型 | 端口 | **temperature** | **top_p** | **top_k** | **is-think** | max_tokens | 服务 max_model_len | 参数来源 |
+|------|:----:|:---------------:|:---------:|:---------:|:------------:|:----------:|:-----------------:|----------|
+| Phi-4-reasoning-plus | 8000 | **0.8** | **0.95** | **50** | ✅ 是<br>（❌ 名字未命中，**须 context.yaml**） | 20000 | 32768 | 模型的 `generation_config.json` |
+| LFM2.5-1.2B-Thinking | 8001 | **0.6** | **0.95** | 未设<br>（服务默认） | ✅ 是<br>（❌ 名字未命中，**须 context.yaml**） | 20000 | 32768 | thinking 默认值<br>（模型 gc 无采样字段） |
+| reka-flash-3 | 8002 | **0.6** | **0.95** | **1024** | ✅ 是<br>（❌ 名字未命中，**须 context.yaml**） | 16384 | **24576** | 模型的 `generation_config.json` |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | **0.6** | **0.95** | 未设<br>（服务默认） | ✅ 是<br>（✅ 名字含 `qwen3`，**自动命中**） | 20000 | 32768 | thinking 默认值<br>（**无** gc 文件） |
+
+**表格说明**
+
+- **is-think 全部为「是」**：4 个模型实测输出都带显式推理标签
+  （Phi-4-reasoning-plus / LFM2.5 → `<think>`；reka-flash-3 → `<reasoning>`；Qwen3.5 → `</think>`）。
+- **只有 Qwen3.5 会被自动识别**（模型名含 `qwen3`，命中 `THINKING_PATTERNS`）；
+  **另外 3 个名字都不含关键词，必须靠 `context.yaml` 的 `thinking_model: true`**，
+  否则会按普通模型贪心 `temperature=0.0` 评测（metax/reka-flash-3 就是栽在这）。
+- **`max_tokens` 由服务端 `max_model_len` 反算**：thinking 走 `max(max_model_len-8192, 8192)` 再
+  cap 到 `THINKING_MAX_TOKENS_CAP=20000`。所以 reka-flash-3 把 `max-model-len` 定为 **24576**
+  才能得到 **16384**（对齐 metax v6 / NV 复现口径）；若用 32768 会得到 20000，口径不符。
+- **top_k 的两种情形**：reka-flash-3 的 gc 显式写了 `top_k: 1024`（且服务端日志确认 vLLM 也采纳了它）；
+  LFM2.5 / Qwen3.5 的 gc 没有采样字段 → 请求不带 top_k → 用服务端默认。
+
+---
+
 ## 0. 四条与厂商无关的通用设置（**四个模型都适用**）
 
 | # | 设置 | 值 | 依据 |
 |---|------|----|------|
-| 1 | **执行模式** | **graph 模式（去掉 `--enforce-eager`）** | ⚠️ metax/reka-flash-3 实测 **eager 16 tok/s vs graph 160 tok/s，差 10 倍**（`_shared/KNOWLEDGE.md` 六：评测一律用 graph）。<br>**当前 4 个 mthreads 服务都是用 `--enforce-eager` 起的，评测前必须重启为 graph。** |
+| 1 | **执行模式** | ⚠️ **`--enforce-eager`（摩尔必须保留，不能去）** | **2026-09-20 实测：4 个模型去掉 `--enforce-eager` 后全部启动失败**，报 `MUSA driver error: operation not permitted when stream is capturing` —— MUSA 驱动不允许 capture 期间分配显存。<br>metax「graph 160 vs eager 16 tok/s」的经验**在摩尔不适用**。曾试过退一步的「只编译不捕获」（`-cc '{"cudagraph_mode":"NONE"}'`）**能启动但比 eager 更慢**（3.95s vs 5.42s），不采用。详见 [[KNOWLEDGE]] 六 |
 | 2 | **数据集** | `gpqa_diamond` | 4 个模型在 `nv_baseline.yaml` 里**都有** gpqa 基线，无需回退 mmlu/math_500 |
 | 3 | **题数** | 定稿用 **`--limit 0`（全量 198 题）** | metax/reka-flash-3 教训：**前 50 题偏易、56% 不可外推**（全量 54.04%，后半段仅 53.38%）。<br>可用 50 题做快速筛查，但**判定一律以 198 题为准** |
 | 4 | **评测前必查** | `grep '\[gen\]' <eval日志>` | 必须看到「**采用模型 generation_config.json 采样参数**」；若见「未定位到模型目录…沿用默认采样参数」，说明 `context.yaml` 没生效，分数不可信 |
@@ -77,7 +106,7 @@ EOF'
 | thinking | ✅ **标 true** | 实测输出 `<reasoning>`；metax 未标但输出确为长推理链 |
 | 采样参数 | **temp=0.6 / top_p=0.95 / top_k=1024**（模型自带，**必须靠 context.yaml 生效**） | **metax 核心修复**：采样生效后同题 +6~12pt |
 | `max_model_len` | **24576** ← 关键：间接得到 `max_tokens=16384`（`24576-8192`），与 NV 复现口径一致 | metax v6 配置 |
-| 执行模式 | **graph**（metax v5 用 eager 直接作废） | metax 迭代记录 |
+| 执行模式 | **`--enforce-eager`**（摩尔必须保留；graph 不可用，见第 0 节 #1） | 本机实测 |
 | 题数 | **198 全量**（50 题 56.00% 不可外推，全量 54.04%） | metax |
 | 算子策略 | **默认黑名单**（`mm,mm_out,bmm,...` 那套）+ **采样生效** | metax 验证：v1→v6 黑名单未变，唯一变量是采样参数 |
 | **判定基准** | ⚠️ **不要用 `nv_baseline.yaml` 的 59** | **metax 已裁定**：改用 **NV 原生 198 题实测 53.54%**。<br>理由：59 出自 NV 失败报告，而同报告记录 NV 硬件上 plugin-FL 同样造成 12pt 退化（60→48）——**该模型对 plugin-FL 敏感是跨平台共性** |
@@ -108,7 +137,7 @@ EOF'
 model_name=<NV key>
 port=<8000|8001|8002|8003>
 
-# ① 服务已用 graph 模式重启（去掉 --enforce-eager），确认就绪
+# ① 服务已就绪（摩尔用 --enforce-eager，graph 不可用），确认端口可访问
 curl -s http://localhost:${port}/v1/models
 
 # ② 补 context.yaml（路径与 thinking_model 按上表）
@@ -150,11 +179,25 @@ grep '\[gen\]' <eval日志>                    # 采样参数是否生效
 
 ## 5. 相对当前状态需要改动的项（TODO）
 
-| # | 改动 | 影响范围 |
-|---|------|----------|
-| 1 | **4 个服务全部去掉 `--enforce-eager`，改 graph 模式重启** | 全部（metax 实测 10 倍吞吐差） |
-| 2 | reka-flash-3 的 `--max-model-len` 从 32768 改为 **24576** | 使 max_tokens=16384，对齐 NV 复现口径 |
-| 3 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 |
-| 4 | 判定基准：reka-flash-3 用 **NV 原生 53.54**，不用表中 59 | 仅 reka-flash-3 |
-| 5 | 首轮筛查用 50 题，**定稿必须 198 题全量** | 全部 |
-| 6 | Phi-4-reasoning-plus 准备 A/B：`rms_norm,silu_and_mul` 在白名单内 vs 移出 | 仅该模型 |
+> 更新：2026-09-20 15:30 —— 服务已按本表重启并完成「首都测试」，下列 1、2 项**已完成**。
+
+| # | 改动 | 影响范围 | 状态 |
+|---|------|----------|:----:|
+| 1 | ~~4 个服务改 graph 模式重启~~ → **结论：graph 在摩尔不可用，改用 `--enforce-eager` 重启** | 全部 | ✅ 已完成（eager） |
+| 2 | reka-flash-3 的 `--max-model-len` 从 32768 改为 **24576** | 使 max_tokens=16384，对齐 NV 复现口径 | ✅ 已完成 |
+| 3 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 | ⬜ 待做（Qwen3.5 可选） |
+| 4 | 判定基准：reka-flash-3 用 **NV 原生 53.54**，不用表中 59 | 仅 reka-flash-3 | ⬜ 待做（评测时） |
+| 5 | 首轮筛查用 50 题，**定稿必须 198 题全量** | 全部 | ⬜ 待做 |
+| 6 | Phi-4-reasoning-plus 准备 A/B：`rms_norm,silu_and_mul` 在白名单内 vs 移出 | 仅该模型 | ⬜ 待做 |
+
+### 当前服务状态（2026-09-20 15:30，`mthreads-25`）
+
+| 模型 | 卡 | 端口 | max_model_len | 首都测试 | 备注 |
+|------|:--:|:----:|:-------------:|:--------:|------|
+| Phi-4-reasoning-plus | GPU0 | 8000 | 32768 | ✅ 答「北京」 | reasoning 啰嗦，128 token 时还在思考 |
+| LFM2.5-1.2B-Thinking | GPU1 | 8001 | 32768 | ✅ 答「北京」 | 646 token 干净收尾 |
+| reka-flash-3 | GPU2 | 8002 | **24576** | ✅ 答「北京」 | 答完后又自续了一轮 ` <sep> human:`，注意 |
+| Qwen3.5-27B-Distilled | GPU3 | 8003 | 32768 | ✅ 答「北京」 | 63 token 就给出答案，最干脆 |
+
+> ⚠️ reka-flash-3 在答完「北京」后**继续编造了下一轮对话**（` <sep> human:`）——
+> 与 metax 记录的「响应极长」一致，评测时关注 `runaway_detection` 与截断。
