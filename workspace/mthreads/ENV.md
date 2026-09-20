@@ -149,20 +149,20 @@ mthreads-gmi -q                 # 摩尔查卡：每卡显存/进程；有占用
 | 项目 | 值 |
 |------|----|
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope` |
-| 内含 | evalscope（判分脚本要求 `1.5.1`）+ modelscope |
-| 用法 | 与 vLLM 容器**隔离运行**，`--network host`，直接打 `http://127.0.0.1:8000/v1`；起容器**不挂** GPU 设备 |
+| 内含 | evalscope **1.11.1**（脚本期望 1.5.1，仅告警不阻塞；脚本已兼容两版分数格式）+ modelscope |
+| 用法 | 与 vLLM 容器**隔离运行**，`--network host`，直接打 `http://127.0.0.1:<port>/v1`；起容器**不挂** GPU 设备 |
 
-> ⚠ **2026-09-20 实测：25/27 上都没有这个 evalscope 镜像**，也没有 `release_评测标准/` 脚本
-> （`find /data /datapool -name fast_gpqa.py` 无结果）。**首轮开工前必须先补齐这两样**：
-> 拉 evalscope 镜像 + 把本仓库 `flagrelease_eval_methods/` 传到共享盘。
-> 25 上有一个 `harbor.baai.ac.cn/flageval/flageval-llmeval`（5.2GB，2 个月前）可作备选，但**未经本项目验证，优先用 flagos-evalscope**。
+> ✅ **2026-09-20 已全部就位**：镜像已拉取（`mthreads-25`）、评测脚本与离线 gpqa 数据集已部署到共享盘、
+> **4 个一对一 eval 容器已建好并验收**。容器↔模型对应表、`context.yaml` 内容、跑评测命令、
+> evalscope 版本差异说明见 **[[EVAL_INFRA]]**。
+
+> ✅ **2026-09-20 已补齐**：镜像已拉取、脚本与离线数据集已部署、4 个 eval 容器已建好并验收（见 [[EVAL_INFRA]]）。
 
 > 💡 **提示**：修复镜像里已预装 `modelscope` / `hf` CLI，**下权重不必另起容器**——
 > 直接在 `flagrelease-fix-<模型>` 容器里 `modelscope download` 即可（见 SOP 第 2 节）。
-> `eval-scope` 容器只在**跑评测**时必需。
 
 ```bash
-docker run -d --name eval-scope \
+docker run -d --name eval-<短名> \
   --network host \
   -v /datapool:/datapool \
   harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope \
@@ -183,7 +183,7 @@ docker run -d --name eval-scope \
 | serve flags | `--dtype bfloat16 --tensor-parallel-size <TP> --gpu-memory-utilization 0.9 --enforce-eager --trust-remote-code`（`--attention-backend` 待实测） |
 | 模型名约定 | `model_name` 取 NV 表 key；served-model-name / 评测 model-name / 日志目录统一用它 |
 | 日志/结果落盘 | `/datapool/flagrelease/release_run_logs/${model_name}/`（serve.log + gpqa.json + verdict.json） |
-| 评测执行位置 | 同一台宿主机上的 `eval-scope` 容器（⚠ eval 镜像尚未就位，见上节） |
+| 评测执行位置 | 同一台宿主机上的 **4 个一对一 eval 容器**（`eval-phi-4-reasoning-plus` / `eval-lfm2.5-1.2b-thinking` / `eval-reka-flash-3` / `eval-qwen3.5-27b-distilled`），见 [[EVAL_INFRA]] |
 | 容器内组件版本 | ✅ 见上文「A. 本轮修复镜像实测版本」 |
 
 ## 版本口径（V1–V4）

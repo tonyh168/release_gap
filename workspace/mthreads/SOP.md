@@ -27,7 +27,8 @@
   本项目落盘约定（见 [[ENV]] 存储节）：
   - 权重 → `/datapool/flagrelease/fixes_models/<模型名>`
   - 日志/结果 → `/datapool/flagrelease/release_run_logs/<模型名>/`
-- **开工前还需补齐**（25/27 上实测都没有）：`flagos-evalscope` 评测镜像 + `release_评测标准/` 评测脚本。
+- **评测环境已就位**（2026-09-20 补齐）：`flagos-evalscope` 镜像已拉取、评测脚本与离线数据集已部署到共享盘、
+  4 个一对一 eval 容器已建好并验收 —— 全部细节见 [[EVAL_INFRA]]。
 
 ## 1. 起容器
 
@@ -83,11 +84,8 @@ modelscope download --model <ModelScope仓库/模型ID，如 microsoft/phi-4> \
 ls /datapool/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safetensors / tokenizer
 ```
 
-> 备用：若修复容器不便，也可用独立的 `eval-scope` 容器下载（同样挂 `/datapool`）：
-> ```bash
-> docker run -d --name eval-scope --network host -v /datapool:/datapool \
->   harbor.baai.ac.cn/flagrelease-public/flagos-evalscope:latest-modelscope sleep infinity
-> ```
+> 备用：若修复容器不便，也可用某个 **eval 容器**下载（同样挂 `/datapool`）——
+> 那 4 个容器已建好，见 [[EVAL_INFRA]]，直接 `docker exec eval-<短名> ...` 即可。
 
 > ⚠ 失败的 50 个模型里，`Hermes-2-Pro-Llama-3-8B` 就是**权重下载超时**折在步骤 1；下载时长异常时先 `ls -lh` 看落盘进度，别盲目重试。
 >
@@ -172,50 +170,53 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 ## 4. 评测判定
 
 > 📌 **逐模型的评测设置已定稿在 [[EVAL_SETTINGS]]**（横比 metax / iluvatar / t-head 的同名或同架构成功案例得出）。
-> **跑任何一个模型的评测前，先看那份文档**——每个模型的 thinking 标记、采样参数、`max-model-len`、
+> **评测环境（eval 容器 / 脚本 / 离线数据集 / `context.yaml`）见 [[EVAL_INFRA]]** —— 4 个模型各有专用容器，1:1 绑定。
+> **跑任何一个模型的评测前，先看这两份文档**——每个模型的 thinking 标记、采样参数、`max-model-len`、
 > 算子策略、判定基准都可能不同。
 
 ### 4.0 评测前三件必做（缺一不可）
 
 ```bash
 model_name=<NV key>; port=<8000|8001|8002|8003>
+c=eval-<短名>        # 一模型一容器，对应关系见 [[EVAL_INFRA]]
 
-# ① 服务必须是 graph 模式（不是 --enforce-eager）——eager 慢 10 倍
-# ② 补 context.yaml —— 不补则模型采样参数被静默忽略、退回贪心
-docker exec <eval容器> sh -c 'mkdir -p /flagos-workspace/shared && cat > /flagos-workspace/shared/context.yaml <<EOF
-model:
-  local_path: /datapool/flagrelease/fixes_models/<模型名>
-  container_path: /datapool/flagrelease/fixes_models/<模型名>
-  thinking_model: true
-EOF'
+# ① 服务已就绪（摩尔用 --enforce-eager；graph 不可用）
+# ② context.yaml 已在对应 eval 容器内配好（已验收，见 [[EVAL_INFRA]]；改模型时只改对应容器那份）
 # ③ 题数：筛查可 --limit 50，定稿必须 --limit 0（全量 198）
 ```
 
-> ⚠️ `context.yaml` 的路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`，
-> 而摩尔容器默认不挂 `/flagos-workspace` —— 评测容器要单独 `-v` 或在容器内就地建目录。
-> **换模型时必须同步改里面的路径。**
+> ⚠️ `context.yaml` 的路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`。
+> 本厂商用 **1:1 容器绑定**保证它不会被用混（容器内私有目录、不挂载），详见 [[EVAL_INFRA]]。
 
 ### 4.1 跑评测
 
-评测脚本对**已运行的 vLLM 服务**跑题，在 **`eval-scope` 容器**里执行。
+评测脚本对**已运行的 vLLM 服务**跑题。**本厂商用一模型一 eval 容器**（对应关系见 [[EVAL_INFRA]]），
+脚本与离线数据集都在共享盘 `/datapool/flagrelease/eval_scripts/`。
 
 ```bash
-docker exec -it eval-scope /bin/bash
-cd /datapool/release_评测标准        # 评测脚本需先传到共享盘（25/27 上尚无，见第 0 节）
-
+c=eval-<短名>          # 见 [[EVAL_INFRA]] 的容器↔模型对应表
 model_name=<与起服务时相同的 NV key>
-# 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric
-python3 fast_gpqa.py --model-name ${model_name} \
+port=<8000|8001|8002|8003>
+
+# ① 跑题（加 --limit 0 跑全量 198；不加默认 50，仅用于筛查）
+docker exec $c bash -lc "cd /datapool/flagrelease/eval_scripts && python3 fast_gpqa.py \
+  --model-name ${model_name} \
   --api-base http://127.0.0.1:${port}/v1 \
   --dataset gpqa_diamond \
-  --output /datapool/flagrelease/release_run_logs/${model_name}/gpqa.json
-python3 accuracy_compare.py \
+  --dataset-dir /datapool/flagrelease/evalscope-datasets \
+  --output /datapool/flagrelease/release_run_logs/${model_name}/gpqa.json"
+
+# ② 判定
+docker exec $c bash -lc "cd /datapool/flagrelease/eval_scripts && python3 accuracy_compare.py \
   --v2 /datapool/flagrelease/release_run_logs/${model_name}/gpqa.json \
   --nv-baseline ${model_name} \
   --nv-baseline-file nv_baseline.yaml --metric gpqa_diamond --json \
-  --output /datapool/flagrelease/release_run_logs/${model_name}/verdict.json
+  --output /datapool/flagrelease/release_run_logs/${model_name}/verdict.json"
 # 退出码 0=达标 1=不达标 2=参数/文件错 3=NV表无此模型或缺该指标
 ```
+
+> `--dataset-dir` 指向**包含 `gpqa_diamond/` 子目录的父目录**，命中后不再联网。
+> 想看实时输出用 `python3 -u`（默认重定向到文件会块缓冲，日志会长时间为空）。
 
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
 - **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`），`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。**摩尔 49/50 个模型有基线**；`Darwin-9B-NEG-FINAL` 无任何基线 → 走两轮对比或上报发起人，不自行构造基线。

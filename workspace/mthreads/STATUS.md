@@ -16,8 +16,11 @@
 | 项目目录建立 | ✅ `/datapool/flagrelease/{fixes_models,release_run_logs}`（25 建、27 已验证可见） |
 | **SOP 端到端验证（起服务冒烟）** | ✅ **已完成** —— `Phi-4-reasoning-plus` 首跑即通（63 秒起服务，短/长 prompt 均 200） |
 | `mthreads-26` 可用性 | ❌ 待发起人确认（bastion 报 `match asset failed: No found asset`） |
-| evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
-| 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
+| evalscope 评测镜像 | ✅ 已拉取（evalscope 1.11.1） |
+| 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/{eval_scripts,evalscope-datasets}` |
+| **4 个一对一 eval 容器 + context.yaml** | ✅ **已建好并验收**（详见 [[EVAL_INFRA]]） |
+| **评测参数定稿** | ✅ 见 [[EVAL_SETTINGS]]（温度/top_p/top_k/is-think 总表） |
+| 正式跑分 | ⬜ **可开跑** —— 环境侧已无阻塞 |
 
 ## 图例
 
@@ -174,10 +177,13 @@
 
 | 项 | 状态 |
 |----|------|
-| evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
-| 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
-| **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（横比 metax / iluvatar / t-head 案例） |
-| 四个模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径）；<br>4 个全部要标 `thinking_model: true` |
+| evalscope 评测镜像 | ✅ 已拉取（`flagos-evalscope:latest-modelscope`，内含 evalscope **1.11.1**） |
+| 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/eval_scripts/` 与 `evalscope-datasets/`（gpqa_diamond 亲测可用） |
+| **4 个一对一 eval 容器** | ✅ **已建好并验收**，各自的 `context.yaml` 全部生效（详见 [[EVAL_INFRA]]） |
+| **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（含「评测参数总表」温度/top_p/top_k/is-think） |
+| 正式跑分 | ⬜ **可以开跑了** —— 环境已就绪，等发起人确认 |
+
+> **环境侧已无阻塞。** 评测入口与命令见 [[EVAL_INFRA]]，逐模型参数见 [[EVAL_SETTINGS]]。
 
 ### ⚠ 评测前必须改的服务侧设置（来自厂商案例 + 本机实测）
 
