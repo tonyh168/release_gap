@@ -178,8 +178,9 @@
 > - **14:30** 全部项目容器按要求 `docker stop`（139 + 147，**未删除，文件系统保留**）。
 > - **14:33** 为两个 iter4 评测重启 139 上 3 个容器；**20:45** iter4 跑完；**21:5x** 两个模型容器也停。
 > - **22:00 起** 按用户指示，用 **TP=8 + graph 模式**重启 **Fathom（GPU 0-7 / :8002）** 与
->   **MiroThinker（GPU 8-15 / :8001）**，双双启动成功 —— **这两个服务当前仍在运行**。
+>   **MiroThinker（GPU 8-15 / :8001）**，双双启动成功。
 > - 评测：**Fathom 30m05s 跑完**（22:28 起）、**MiroThinker 114m20s 跑完**（22:30 起，00:22 结束）。
+> - **01:00** 两个 graph 服务也按要求停止 → **139 的 16 张卡全部释放**。
 > - ⚠️ **147 上全部容器仍为停止状态**（MiroThinker 已在 139 新建容器）。
 >
 > 两个评测的 wrapper 在容器内 `/tmp/`（`fathom_graph_eval.py` / `miro_graph_eval.py`），
@@ -241,22 +242,22 @@
   会同时改变**所有**模型的采样（OpenThinker-7B / Marco-o1 的 0.0→0.7），需连带复核这两个模型的"达标"结论。
 
 
-### 🟡 服务运行状态（**截至 2026-09-20 00:40：139 上 2 个 graph 服务在运行，其余全停**）
+### 🟡 服务运行状态（**截至 2026-09-20 01:00：全部项目容器已停，16 张卡全部释放**）
 
-> **🟢 139 当前在运行**：`flagrelease-fix-fathom-r1-14b`（GPU 0-7 / :8002）、
-> `flagrelease-fix-mirothinker-v1.5-30b`（GPU 8-15 / :8001）、`eval-scope`（不占 GPU）。
-> **两个模型服务各占 8 张卡（TP=8，graph 模式）**，评测已跑完、当前空转，**若不再需要请停掉释放 GPU**。
+> **139 与 147 上的项目容器均已 `docker stop`（未删除，文件系统保留，`docker start` 可恢复）。**
+> **139 只剩 `eval-scope` 在运行（不占 GPU）；147 全停。**
+> **所有 GPU 均已释放**（139 的 16 张卡均为 68MiB 基线）。
 >
-> **其余全部已停**（`docker stop`，未删除，文件系统保留，`docker start` 可恢复）：
-> 139 上另外 11 个模型容器、147 上全部 4 个容器。
-> 下表标注「已停」的行即为此类；**Fathom / MiroThinker 两行的 GPU/端口是当前实际占用的**。
+> 下表是**历史服务位记录**，用于说明每个模型曾经占用哪张卡/哪个端口，**当前均未运行**。
+> ⚠️ 重启服务前请先读各自 fix log 的「graph 模式启动」节 —— **去掉 `--enforce-eager`** 是
+> 本环境多数模型提速的关键（Fathom 5.4×、MiroThinker 8.7×），且 **Fathom 需黑名单加 `broadcast_to`**。
 
 **iluvatar-139**
 
 | 模型 | GPU | 端口 | 数据集 | attention-backend | 状态 |
 |------|:---:|:----:|:------:|:-----------------:|------|
-| **Fathom-R1-14B** | **0-7** | **8002** | gpqa_diamond | TRITON_ATTN | 🟢 **运行中（graph 模式，TP=8）**—— ✅ iter5 完成：**68.0%，达标**，runaway 0/50 |
-| **MiroThinker-v1.5-30B** | **8-15** | **8001** | gpqa_diamond | TRITON_ATTN | 🟢 **运行中（graph 模式，TP=8）**—— ✅ iter5 完成：**30.0%，达标（勉强）**，⚠️ runaway 35/50 |
+| **Fathom-R1-14B** | **0-7** | **8002** | gpqa_diamond | TRITON_ATTN | ⏹️ **已停**（graph 模式 TP=8）—— ✅ iter5 完成：**68.0%，达标**，runaway 0/50 |
+| **MiroThinker-v1.5-30B** | **8-15** | **8001** | gpqa_diamond | TRITON_ATTN | ⏹️ **已停**（graph 模式 TP=8）—— ✅ iter5 完成：**30.0%，达标（勉强）**，⚠️ runaway 35/50 |
 | **OpenReasoning-Nemotron-1.5B** | **0** | **8011** | math_500 (200题) | TRITON_ATTN | ⏹️ **已停**（iter4 完成：76.0%，↓9.52%，verdict exit=1） |
 | **Phi-4-mini-reasoning** | **9** | **8012** | math_500 (200题) | TRITON_ATTN | ⏹️ **已停**（iter4 完成：62.0%，↓29.71%，verdict exit=1） |
 | LFM2.5-1.2B-Thinking | 0 | 8000 | gpqa_diamond | TRITON_ATTN | ✅ 完成（已停） |
@@ -278,19 +279,19 @@
 | QwQ-32B | 0-3 | 8000 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（56.0% vs 63.0）（已停） |
 | MiroThinker-v1.5-30B | 4-7 | 8001 | gpqa_diamond | TRITON_ATTN | ⏸️ 旧容器，iter3 中止后已停；**本轮改在 139 上重建容器运行** |
 
-> **⚠️ 139 上 Fathom 与 MiroThinker 两个 graph 服务当前仍在运行**，占满 16 张卡（各 TP=8）。
-> 评测已跑完，若不再需要请停掉释放 GPU。
-> ⚠️ **这两个服务的图只捕获了 batch=8**（`--max-num-seqs 8 --cudagraph-capture-sizes 8`），
+> ✅ **139 上两个 graph 服务已于 2026-09-20 01:00 停止，16 张卡全部释放**（均为 68MiB 基线）。
+> ⚠️ 重启时注意：**它们的图只捕获了 batch=8**（`--max-num-seqs 8 --cudagraph-capture-sizes 8`），
 > **并发超过 8 会退回 eager**，白费提速 —— 后续评测务必锁 8。
 >
 > **iter4/iter5 的 wrapper 都在 NFS `release_run_logs/_wrappers_backup/`**
 > （`openreason_maxtok.py` / `phi4mini_sampling.py` / `fathom_graph_eval.py` / `miro_graph_eval.py` 等）——
 > **不再只依赖容器 `/tmp`**。
-> ✅ **`fast_gpqa.py`（NFS 已修补版）已拷入 eval-scope**，所以 iter5 两个评测**收尾没有再崩**
+> ✅ **`fast_gpqa.py`（NFS 已修补版）已拷入 139 的 eval-scope**，所以 iter5 两个评测**收尾没有再崩**
 > （此前 4 次复评全部崩在 `detect_runaway`，分数得从报告里捞）。
+> ⚠️ **147 的 eval-scope 尚未做这一步**，若在 147 起评测需先补。
 > `phi4mini_sampling.py` / `fathom_graph_eval.py` / `miro_graph_eval.py` / `force_conc.py` 等）
 > **已在 NFS `_wrappers_backup/` 备份，无需再抄进文档**。
-> **所有评测进程均已退出**；139 上只剩 Fathom / MiroThinker 两个 graph 服务在运行（空转待用）。
+> **所有评测进程、以及全部模型服务均已停止**（139 只剩 `eval-scope`，不占 GPU）。
 
 跟踪进度：
 
