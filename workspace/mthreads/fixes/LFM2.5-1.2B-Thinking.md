@@ -59,6 +59,21 @@ iluvatar 侧曾因对这类模型误用 `--attention-backend TRITON_MLA` 而报 
 - 短 prompt（16 token）：✅ 200，3.74s
 - 长 prompt（2262 token）：✅ 200，3.95s
 
+## 评测设置（2026-09-20 定稿，详见 [[EVAL_SETTINGS]]）
+
+| 项目 | 值 | 来源 |
+|------|----|------|
+| 数据集 / 题数 | `gpqa_diamond`；筛查 50 题，**定稿 198 题全量** | 有 NV 基线 |
+| thinking | ✅ `thinking_model: true` | 输出 `<think>` |
+| 采样参数 | 模型无采样字段 → thinking 默认 temp=0.6 / top_p=0.95 | `resolve_gen_params()` |
+| `max_model_len` | 32768 | iluvatar 采用值 |
+| 执行模式 | **graph（评测前去掉 `--enforce-eager` 重启）** | metax 实测 eager 慢 10 倍 |
+| 算子策略 | 默认 `sort,sort_stable` 即可，**无需扩展** | ✅ **iluvatar 实测 PASS**（32.0% vs NV 29.0，退出码 0） |
+| NV 基线 | 29.0 → 下限 27.55 | iluvatar 同基线同结果 |
+| ⚠️ 已知坑 | thinking 的 `content` 可能是 **list** → `detect_runaway` 崩、`score=null`；<br>**别重跑**，从 evalscope 报告恢复分数 | iluvatar 实测 |
+
+> **4 个模型里最可能一次过的**——iluvatar 已用同一套设置 PASS，直接照抄。
+
 ## ⚠ 评测阶段预警（尚未处理，跑评测前必看）
 
 1. **不会被自动识别为 thinking 模型**。实测输出以 `<think>` 开头，但 `fast_gpqa.py` 的

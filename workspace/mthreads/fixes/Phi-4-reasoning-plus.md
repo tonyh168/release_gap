@@ -70,6 +70,22 @@ INFO 09-20 14:07:03 Application startup complete.
 - 短 prompt：✅ 正常作答（reasoning 模型，输出带 `<think>`）
 - 长 prompt（14.9KB，约 6000 token）：✅ HTTP 200，9.55s —— **prefill 变长注意力路径已验证**
 
+## 评测设置（2026-09-20 定稿，详见 [[EVAL_SETTINGS]]）
+
+| 项目 | 值 | 来源 |
+|------|----|------|
+| 数据集 / 题数 | `gpqa_diamond`；筛查 50 题，**定稿 198 题全量** | 有 NV 基线；50 题不可外推 |
+| thinking | ✅ `thinking_model: true`（必须） | 输出 `<think>`，关键词名单不含 |
+| 采样参数 | temp=0.8 / top_p=0.95 / top_k=50（模型自带） | `generation_config.json` |
+| `max_model_len` | 32768（模型默认） | config |
+| `max_tokens` | 自动 24576 → thinking 上限 20000 | `auto_max_tokens()` |
+| 执行模式 | **graph（评测前去掉 `--enforce-eager` 重启）** | metax 实测 eager 慢 10 倍 |
+| 算子策略 | 白名单 `silu_and_mul,rms_norm,rotary_embedding` | 对齐 t-head/phi-4 最优最小白名单 |
+| NV 基线 | 46 → 达标下限 **43.7** | `nv_baseline.yaml` |
+| ⚠️ **首个 A/B** | `rms_norm,silu_and_mul` 留在白名单 vs **移出**（关掉其 FlagGems 替换） | ⚠️ **metax 与 t-head 结论相反**：<br>metax/Phi-4-mini（同 GQA）实测这两个算子是退化根因（加黑名单 26%→44% 达标）；<br>t-head/phi-4（同架构）却把它们留在白名单拿到最好成绩。**必须在摩尔上实测** |
+
+> 本模型**无同名厂商成功案例**，是 4 个里唯一没有可直接照抄配置的，见 [[EVAL_SETTINGS]] 2.1。
+
 ## ⚠ 评测阶段的两个预警（尚未处理，跑评测前必看）
 
 1. **本模型不会被自动识别为 thinking 模型**。`fast_gpqa.py` 的 `THINKING_PATTERNS`（`qwen3`/`qwq`/`deepseek-r1`/`light-r1`/`minicpm4.1`/`mimo`/`hunyuan`）

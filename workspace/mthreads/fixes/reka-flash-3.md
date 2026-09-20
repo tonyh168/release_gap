@@ -68,6 +68,22 @@ If this is not intended, please relaunch vLLM instance with `--generation-config
 - 短 prompt（17 token）：✅ 200，4.76s
 - 长 prompt（2257 token）：✅ 200，11.48s
 
+## 评测设置（2026-09-20 定稿，照抄 metax 成功案例，详见 [[EVAL_SETTINGS]]）
+
+| 项目 | 值 | 来源 |
+|------|----|------|
+| 数据集 / 题数 | `gpqa_diamond`；**定稿 198 题全量**（50 题 56% 不可外推） | metax |
+| thinking | ✅ `thinking_model: true` | 输出 `<reasoning>` |
+| 采样参数 | **temp=0.6 / top_p=0.95 / top_k=1024**（模型自带，**必须靠 context.yaml 生效**） | **metax 核心修复**，同题 +6~12pt |
+| `max_model_len` | ⚠️ **改为 24576**（当前是 32768）← 间接得 `max_tokens=16384`，对齐 NV 复现口径 | metax v6 |
+| 执行模式 | **graph（评测前去掉 `--enforce-eager` 重启）** | metax v5 用 eager 直接作废 |
+| 算子策略 | **默认黑名单**（`mm,mm_out,bmm,...`）+ 采样生效 | metax：v1→v6 黑名单未变，唯一变量是采样 |
+| **判定基准** | ⚠️ **用 NV 原生 198 题实测 53.54%，不要用表里的 59** | metax 已裁定（表值口径不符） |
+| ⚠️ 禁令 | **不要加 `--generation-config vllm`** | 会主动丢弃模型采样参数 |
+
+> **最该照抄的一个**——metax 已用这套配置 198 题达标（54.04% vs 53.54%）。
+> 摩尔若出现 44~46% 量级的低分，**先查采样参数，别折腾算子黑名单**（metax 在这条路上耗了 v1~v5 五轮）。
+
 ## ⚠ 评测阶段预警（尚未处理，跑评测前必看）
 
 1. **采样参数仍会被静默忽略**（见上）。模型的 `generation_config.json`：

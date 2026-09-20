@@ -1,7 +1,8 @@
 # 摩尔线程 Mthreads 迁移修复 SOP
 
 完整流程：**宿主机 → 镜像 → 起容器 → 下模型 → 起 vLLM → 评测**。
-真实环境值见 [[ENV]]（本目录），命令模板在 `_shared/templates/`，达标口径见 `_shared/EVAL.md`，踩坑经验见 `_shared/KNOWLEDGE.md`。
+真实环境值见 [[ENV]]（本目录），**逐模型评测设置见 [[EVAL_SETTINGS]]**，命令模板在 `_shared/templates/`，
+达标口径见 `_shared/EVAL.md`，踩坑经验见 `_shared/KNOWLEDGE.md`。
 
 ---
 
@@ -143,7 +144,10 @@ mkdir -p /datapool/flagrelease/release_run_logs/${model_name}
   2>&1 | tee /datapool/flagrelease/release_run_logs/${model_name}/serve.log
 ```
 
-- 日志出现 `Application startup complete` 即就绪。先跑 **eager**（`--enforce-eager`）确认能起；确认后再评估 graph 模式（graph 吞吐显著更高，见 KNOWLEDGE 六）。
+- 日志出现 `Application startup complete` 即就绪。
+- ⚠️ **起服务分两步：先 `--enforce-eager` 验能起，评测前必须去掉它改 graph 模式重启。**
+  metax/reka-flash-3 实测 **eager 16 tok/s vs graph 160 tok/s（差 10 倍）**，eager 下评测耗时不可接受
+  （见 `_shared/KNOWLEDGE.md` 六）。**不要用 eager 跑正式评测。**
 - **冒烟 PASS ≠ 评测能跑**：短 prompt 只走 decode，长 prompt 才走 prefill 变长注意力。起来后必须用长 prompt（直接跑几题 GPQA）验证，别只测 `1+1`。
 - **起不来**：`float4_e2m1fn_x2` → 拿错镜像了，换 0.24 口径（见第 1 节）；算子编译崩 / OOM → 见 [[KNOWLEDGE]] 一。
 - ✅ **vllm 路径**：本镜像里 vllm 在 **`/usr/local/bin/vllm`**，**没有 `/opt/conda`**
@@ -160,7 +164,33 @@ curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/
 
 ## 4. 评测判定
 
-评测脚本对**已运行的 vLLM 服务**（`http://127.0.0.1:8000/v1`）跑题，在 **`eval-scope` 容器**里执行。
+> 📌 **逐模型的评测设置已定稿在 [[EVAL_SETTINGS]]**（横比 metax / iluvatar / t-head 的同名或同架构成功案例得出）。
+> **跑任何一个模型的评测前，先看那份文档**——每个模型的 thinking 标记、采样参数、`max-model-len`、
+> 算子策略、判定基准都可能不同。
+
+### 4.0 评测前三件必做（缺一不可）
+
+```bash
+model_name=<NV key>; port=<8000|8001|8002|8003>
+
+# ① 服务必须是 graph 模式（不是 --enforce-eager）——eager 慢 10 倍
+# ② 补 context.yaml —— 不补则模型采样参数被静默忽略、退回贪心
+docker exec <eval容器> sh -c 'mkdir -p /flagos-workspace/shared && cat > /flagos-workspace/shared/context.yaml <<EOF
+model:
+  local_path: /datapool/flagrelease/fixes_models/<模型名>
+  container_path: /datapool/flagrelease/fixes_models/<模型名>
+  thinking_model: true
+EOF'
+# ③ 题数：筛查可 --limit 50，定稿必须 --limit 0（全量 198）
+```
+
+> ⚠️ `context.yaml` 的路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`，
+> 而摩尔容器默认不挂 `/flagos-workspace` —— 评测容器要单独 `-v` 或在容器内就地建目录。
+> **换模型时必须同步改里面的路径。**
+
+### 4.1 跑评测
+
+评测脚本对**已运行的 vLLM 服务**跑题，在 **`eval-scope` 容器**里执行。
 
 ```bash
 docker exec -it eval-scope /bin/bash
@@ -169,24 +199,32 @@ cd /datapool/release_评测标准        # 评测脚本需先传到共享盘（2
 model_name=<与起服务时相同的 NV key>
 # 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric
 python3 fast_gpqa.py --model-name ${model_name} \
-  --api-base http://127.0.0.1:8000/v1 \
+  --api-base http://127.0.0.1:${port}/v1 \
+  --dataset gpqa_diamond \
   --output /datapool/flagrelease/release_run_logs/${model_name}/gpqa.json
 python3 accuracy_compare.py \
   --v2 /datapool/flagrelease/release_run_logs/${model_name}/gpqa.json \
   --nv-baseline ${model_name} \
-  --nv-baseline-file nv_baseline.yaml --json \
+  --nv-baseline-file nv_baseline.yaml --metric gpqa_diamond --json \
   --output /datapool/flagrelease/release_run_logs/${model_name}/verdict.json
 # 退出码 0=达标 1=不达标 2=参数/文件错 3=NV表无此模型或缺该指标
 ```
 
 - `model_name` 既是 NV 表 key，`--nv-baseline ${model_name}` 直接命中，无需额外映射。
 - **指标回退**：退出码 3 且提示缺 `gpqa_diamond` → 改跑 `--dataset math_500`（或 `mmlu`），`accuracy_compare` 加 `--metric math_500`（或 `mmlu`）。见 `_shared/EVAL.md`。**摩尔 49/50 个模型有基线**；`Darwin-9B-NEG-FINAL` 无任何基线 → 走两轮对比或上报发起人，不自行构造基线。
-- **评测前必查采样参数**：`grep '\[gen\]' <eval日志>`——出现"未定位到模型目录…沿用默认采样参数"说明**模型 `generation_config.json` 被忽略、正在用贪心**。摩尔这批模型里 `reka-flash-3`、`Magistral-Small-2506` 都属这类（贪心会确定性复读），按 KNOWLEDGE 二的处理补 `context.yaml`。
+- **判据是 198 题全量**，50 题只用于筛查——metax 实测**前 50 题偏易（56%）不能外推**（全量 54.04%）。
+- **评测前必查采样参数**：`grep '\[gen\]' <eval日志>`——必须是「**采用模型 generation_config.json 采样参数**」；
+  若显示「未定位到模型目录…沿用默认采样参数」说明 `context.yaml` 没生效，**分数不可信**。
+- ⚠️ **`score=null` 的已知情况**：thinking 模型的 `message.content` 是 list 结构时，
+  会触发 `detect_runaway` 的 `AttributeError: 'list' object has no attribute 'strip'` → 分数写不出。
+  **不是评测失败**，从 evalscope 报告恢复即可：`outputs/gpqa_diamond/<时间戳>/reports/<模型名>/gpqa_diamond.json`
+  的 `metrics[0].score`。（iluvatar 的 LFM2.5 / Qwen3.5 都遇到过。）
 - **runaway / 截断红旗**：结果 JSON 的 `truncation_detected` / `runaway_detection.runaway_count` 非零时分数不可信。摩尔已有 `FluentlyQwen2.5-32B` 因 FlagGems 下 mmlu 生成失控而无法评测——先查这两项再谈分数。
-- **long-CoT 模型**（OpenReasoning-Nemotron-7B、Apodex-1.0-4B-SFT 等）单题输出是普通模型 10 倍：显式固定 `--max-tokens`、`--eval-batch-size` 锁定并发，避免重演"mmlu 跑到 427/1140 超预算"。
+- **long-CoT 模型**（OpenReasoning-Nemotron-7B、Apodex-1.0-4B-SFT 等）单题输出是普通模型 10 倍：显式固定 `--eval-batch-size` 锁定并发，避免重演"mmlu 跑到 427/1140 超预算"。
 - 评测输出与 serve 日志同落 `/datapool/flagrelease/release_run_logs/${model_name}/`，一个模型一个目录。
-- **别把合成基线当实测**：摩尔历史报告的 V1 性能基线多为 `v2_initial_x1.2` 合成值；本轮判定只认 `accuracy_compare` 的退出码，精度以 NV 基线为准。
-- 小样本（50 题）绝对差 ≤2 题仍判达标。
+- **别把合成基线当实测**：摩尔历史报告的 V1 性能基线多为 `v2_initial_x1.2` 合成值；本轮判定只认 `accuracy_compare` 的退出码。
+- **基准取值可能需裁定**：`nv_baseline.yaml` 的值与 NV 原生实测不符时，逐案处理（reka-flash-3 已裁定改用 NV 原生实测 53.54，见 [[EVAL_SETTINGS]] 2.3）。
+- 小样本（50 题）绝对差 ≤2 题仍判达标（仅用于筛查阶段）。
 
 ## 5. 记录
 

@@ -90,6 +90,25 @@ KV cache 每 token 大小 = `64 层 × 2(K,V) × 4 kv_heads × 256 head_dim × 2
 - 短 prompt（15 token）：✅ 200，10.63s
 - 长 prompt（2261 token）：✅ 200，23.28s
 
+## 评测设置（2026-09-20 定稿，详见 [[EVAL_SETTINGS]]）
+
+| 项目 | 值 | 来源 |
+|------|----|------|
+| 数据集 / 题数 | `gpqa_diamond`；筛查 50 题，**定稿 198 题全量** | 有 NV 基线 |
+| thinking | ✅ `thinking_model: true` | 实测输出含 **`</think>`** 闭合标签（开标签被 chat template 吃掉） |
+| 采样参数 | 模型无 `generation_config.json` → thinking 默认 temp=0.6 / top_p=0.95 | — |
+| `max_model_len` | **32768**（受 KV 限制，80GB 卡上限约 65536） | 见上「为什么要显式限长」 |
+| `max_tokens` | 自动 24576 → thinking 上限 20000 | `auto_max_tokens()` |
+| 执行模式 | **graph（评测前去掉 `--enforce-eager` 重启）** | metax 实测 eager 慢 10 倍 |
+| 算子策略 | 白名单 `silu_and_mul,rms_norm,rotary_embedding` | 摩尔首轮统一口径 |
+| NV 基线 | 75 → 下限 **71.25** | `nv_baseline.yaml` |
+| ⚠️ 已知坑 | thinking `content` 可能为 list → `score=null`，从 evalscope 报告恢复 | iluvatar 实测 |
+
+> **摩尔的机会**：iluvatar 用同样配置跑出 **70.0%（NV 75，↓6.67%，差 2.5 题）不达标**，
+> 但它的 `max-model-len` **只有 8192**（受 32GB 卡限制，被记为「必要约束」），且当轮有 1 个 runaway（index 22）。
+> **摩尔单卡 80GB 可给到 32768（4 倍上下文）**——条件显著更好，重跑值得。
+> 若仍卡在 70 附近，**下一个变量是算子策略**（参照 Phi-4 那条 GQA 经验做 A/B）。
+
 ## ⚠ 评测阶段预警（尚未处理）
 
 1. **要不要标 thinking 待定**。它是 `Reasoning-Distilled` 模型，但本次采样输出**没有** `<think>` /

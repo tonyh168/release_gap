@@ -177,4 +177,15 @@
 |----|------|
 | evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
 | 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
-| reasoning 模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径）。<br>`Phi-4-reasoning-plus`→`<think>`、`LFM2.5-1.2B-Thinking`→`<think>`、`reka-flash-3`→`<reasoning>` 三个确认要标；<br>`Qwen3.5-27B-Distilled` 本次采样未见显式标签，**待跑几题再定** |
+| **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（横比 metax / iluvatar / t-head 案例） |
+| 四个模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径）；<br>4 个全部要标 `thinking_model: true` |
+
+### ⚠ 评测前必须改的服务侧设置（来自厂商案例）
+
+| # | 改动 | 影响 | 依据 |
+|---|------|------|------|
+| 1 | **4 个服务全部改 graph 模式**（去掉 `--enforce-eager`） | 全部 | metax 实测 **eager 16 tok/s vs graph 160 tok/s（差 10 倍）** |
+| 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 |
+| 3 | reka-flash-3 判定基准改用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定 |
+
+> 当前 4 个服务**都是 `--enforce-eager` 起的**，属冒烟验证配置，**不能直接用于正式评测**。

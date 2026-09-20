@@ -169,6 +169,33 @@
   **处置**：起服务**前**花 10 秒查 registry，比起来之后再排查快得多。
   **来源**：mthreads/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled（2026-09-20）
 
+- **现象**：同一个模型架构（Phi-4 系，GQA 40Q/10KV），不同厂商给出的算子结论**完全相反**：
+  metax/Phi-4-mini-instruct 实测「`rms_norm` + `silu_and_mul` 走 FlagGems 是精度退化根因，加黑名单后
+  26%→44% 达标」；t-head/phi-4 却把这两个算子**留在白名单里**拿到最好成绩（66%→70%）。
+  **根因**：算子级的精度结论**跨平台不可移植**——同一算子的 FlagGems 实现 vs 各厂商原生实现，
+  数值路径不同，在 A 芯片上是根因、在 B 芯片上可能无害甚至更优。
+  **处置**：**引用其他厂商的算子结论时，只当作「优先尝试的 A/B 假设」，不要当结论照搬**。
+  首轮按本平台统一口径起服务，不达标时**第一个 A/B 就试这个假设**。
+  **来源**：metax/Phi-4-mini-instruct vs t-head/phi-4 对照（2026-09-20 横比）
+
+- **现象**：思考 `thinking_model: true` 后，评测跑完但 `gpqa.json` 的 `score=null`，
+  日志报 `AttributeError: 'list' object has no attribute 'strip'`（栈在 `detect_runaway`）。
+  **根因**：部分 thinking 模型的 `message.content` 是 **list 结构**（分段内容），
+  而 `detect_runaway` 按字符串处理。**评测本身是成功的**，只是分数写不出。
+  **处置**：**别重跑**，从 evalscope 报告恢复：
+  `outputs/gpqa_diamond/<时间戳>/reports/<模型名>/gpqa_diamond.json` 的 `metrics[0].score`，
+  手写最小 result JSON 再跑 `accuracy_compare`。
+  **来源**：iluvatar/LFM2.5-1.2B-Thinking、iluvatar/Qwen3.5-27B-Distilled（2026-09-17）
+
+- **现象**：`nv_baseline.yaml` 里的分数与 NV 原生实测对不上，导致「差 1~2 分不达标」。
+  **根因**：基线表的值可能来自 NV **失败报告**里的参考分，口径与「NV 原生 + 官方镜像 + 同题量」
+  的实测不是一回事。例：reka-flash-3 表中 `gpqa_diamond: 59`，而 NV 原生 198 题实测只有 **53.54**；
+  同一份 NV 报告还记录了 NV 硬件上 plugin-FL 同样造成 12pt 退化（60→48）——说明该模型对 plugin-FL
+  敏感是**跨平台共性**，不是本平台独有。
+  **处置**：**差 1~2 分就贴近阈值时，先质疑基线口径**，别急着调算子。必要时按同机同镜像同题量
+  亲手复现一份 NV 基准，并像 metax 那样**把基准取值裁定写进修复日志**。
+  **来源**：metax/reka-flash-3 基准取值裁定（2026-09-19）
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）
