@@ -117,7 +117,7 @@
 | DeepSeek-R1-Distill-Qwen-32B | gpqa_diamond 37 | 📋 待开始 | |
 | Phi-3-vision-128k-instruct | gpqa_diamond 25.0 | 📋 待开始 | 多模态 VLM，需图像输入支持 |
 | Qwen3-30B-A3B-Instruct-2507 | gpqa_diamond 62 | 📋 待开始 | |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | 📋 待开始 | |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | 🟢 服务运行中 | **已起**（TP=1/GPU3/:8003，2m40s 起服务，短+长 prompt 均 200）。⚠ **必须显式 `--max-model-len 32768`**——模型默认 256K，KV 需 64GB 装不下（256KB/token）。多模态架构（含视觉塔 + MTP 权重），文本路径已验证，图像未验证 |
 | Qwen3.5-27B-Derestricted | mmlu 89.98 / math_500 84.8 | 📋 待开始 | |
 | Turkish-Gemma-9b-v0.1 | mmlu 75.19 / math_500 53.6 | 📋 待开始 | 服务启动未通过 |
 | gemma-2-27b-it | gpqa_diamond 48 | 📋 待开始 | |
@@ -137,13 +137,14 @@
 
 ## 当前进度快照
 
-> 更新：2026-09-20 14:40
+> 更新：2026-09-20 14:45
 
 - **精度已通过**：0 / 50（3 个模型在流水线侧已达标，待复核确认后计入）
 - **精度不达标**：0 / 50
-- **服务已起/冒烟通过**：3 / 50（`Phi-4-reasoning-plus` :8000 / `LFM2.5-1.2B-Thinking` :8001 / `reka-flash-3` :8002，**全部一次通过**）
+- **服务已起/冒烟通过**：**4 / 50** —— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
+  `reka-flash-3` / `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled`，**全部一次通过**
 - **评测进行中**：0 / 50
-- **待开始**：47 / 50
+- **待开始**：46 / 50
 
 ### 当前 GPU 占用（mthreads-25）
 
@@ -152,9 +153,10 @@
 | GPU0 | 73797 MiB | Phi-4-reasoning-plus :8000 |
 | GPU1 | 73882 MiB | LFM2.5-1.2B-Thinking :8001 |
 | GPU2 | 73742 MiB | reka-flash-3 :8002 |
-| GPU3–7 | 0 MiB | 空闲（5 张） |
+| GPU3 | 73393 MiB | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled :8003 |
+| GPU4–7 | 0 MiB | **空闲（4 张）** |
 
-> ⚠ 三张卡各占 73GB ≈ 90%——`--gpu-memory-utilization 0.9` 是**按卡容量预留**，与模型大小无关
+> ⚠ 每张卡各占 73GB ≈ 90%——`--gpu-memory-utilization 0.9` 是**按卡容量预留**，与模型大小无关
 > （1.2B 的小模型也吃满 73GB）。**一模型一卡**，8 卡机最多同时跑 8 个。若要在同卡多开，
 > 必须显式下调该值。
 
@@ -167,15 +169,12 @@
 | Phi-4-reasoning-plus | 28 GB | `Phi3ForCausalLM`（dense GQA） | ✅ 已下 + 🟢 服务运行中 |
 | LFM2.5-1.2B-Thinking | 2.2 GB | `Lfm2ForCausalLM`（混合 SSM） | ✅ 已下 + 🟢 服务运行中 |
 | reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 + 🟢 服务运行中 |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（11 分片） | ✅ 已下，待起服务 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（多模态+MTP，11 分片） | ✅ 已下 + 🟢 服务运行中 |
 
-> ⚠ `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` 的架构是 **`Qwen3_5ForConditionalGeneration`**
-> （非纯文本 `CausalLM`，config 里带 `image_token_id`），起服务时可能需额外参数，**首次起要留意**。
-
-### 评测阻塞项（三个服务都已就绪，卡在评测环境）
+### 评测阻塞项（四个服务都已就绪，卡在评测环境）
 
 | 项 | 状态 |
 |----|------|
 | evalscope 评测镜像 | ⚠️ 25/27 上均无，需拉取 |
 | 评测脚本（`fast_gpqa.py` / `accuracy_compare.py` / `nv_baseline.yaml`） | ⚠️ 25/27 上均无，需传到共享盘 |
-| 三个 reasoning 模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径） |
+| reasoning 模型的 `context.yaml` | ⬜ 待补（`/flagos-workspace/shared/context.yaml` 路径硬编码，容器需建同路径）。<br>`Phi-4-reasoning-plus`→`<think>`、`LFM2.5-1.2B-Thinking`→`<think>`、`reka-flash-3`→`<reasoning>` 三个确认要标；<br>`Qwen3.5-27B-Distilled` 本次采样未见显式标签，**待跑几题再定** |

@@ -136,6 +136,39 @@
   否则「一模型独占一卡」。8 卡机器上跑 50 个模型时这条很关键。
   **来源**：mthreads/LFM2.5-1.2B-Thinking（2026-09-20，权重仅 2.2GB 却占用 73.8GB）
 
+- **现象**：起服务时按模型 config 的 `max_position_embeddings` 走，结果 KV cache 装不下 / 起不来。
+  **根因**：**不能直接信模型声明的上下文长度**，要先按 KV cache 反算。每 token KV 大小 =
+  `层数 × 2(K,V) × kv_heads × head_dim × dtype字节`。head_dim 大的模型（如 256）极其吃 KV。
+  **实例**：mthreads/`Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` —— 64 层 × 4 kv_heads × 256 head_dim
+  = **256 KB/token**；权重 52GB 后仅剩约 20GB 给 KV，模型默认 262144（256K）需 **64GB**，必然装不下。
+  显式 `--max-model-len 32768`（8GB）后才起来。
+  **处置**：起任何新模型前先算一遍；模型默认值超过可用 KV 时**显式传 `--max-model-len`**。
+  评测若报 `truncation_detected:true`，**逐级上调**（32768→65536→…），别一步跳到模型上限。
+  **来源**：mthreads/Qwen3.5-27B-Distilled（2026-09-20）；同类风险见各厂商 128k/256K 长上下文模型
+
+- **现象**：同一个算子白名单下，不同模型日志里注册到 `default.flagos` 的算子数不一样
+  （Phi-4-reasoning-plus 3 个：`rms_norm`/`rotary_embedding`/`silu_and_mul`；
+  Qwen3.5-27B-Distilled 只有 `silu_and_mul` 1 个）。容易误判成「白名单没生效」。
+  **根因**：`Op 'X' using 'default.flagos'` 这行是**算子首次被 dispatch 时**才打印的（惰性），
+  不是启动时一次性列出全部白名单。模型架构不同 → 触达的算子不同；Qwen3.5 的 rms_norm/rotary
+  可能走了 fused 或专用实现，压根没经过 dispatch 层。
+  **处置**：①**别用「注册了几个算子」判断白名单是否生效**——要看有没有 `OpManager initialized: N ops`
+  这行（它反映的是总算子集），以及具体哪些 op 被 dispatch；
+  ②反过来，这个差异本身是**有价值的探针**：它说明该模型的哪些算子**实际走了 FlagGems**，
+  写修复报告时应明确列出，否则「算子替换覆盖率」会说不清。
+  **来源**：mthreads/Phi-4-reasoning-plus vs Qwen3.5-27B-Distilled 对照（2026-09-20）
+
+- **现象**：担心摩尔镜像不支持新架构（如 Qwen3.5、带 MTP 的模型），不敢起。
+  **根因**：vLLM 0.24.0 覆盖面比预期广。查法：
+  ```bash
+  grep -n "<架构名>" /usr/local/lib/python3.10/dist-packages/vllm/model_executor/models/registry.py
+  ls /usr/local/lib/python3.10/dist-packages/vllm/model_executor/models/ | grep -i <关键词>
+  ```
+  **实例**：`Qwen3_5ForConditionalGeneration` 在 registry 第 566 行有映射（→ `qwen3_5`），
+  且存在 `qwen3_5_mtp.py`；mthreads 镜像**直接起成功**，无需额外适配。
+  **处置**：起服务**前**花 10 秒查 registry，比起来之后再排查快得多。
+  **来源**：mthreads/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled（2026-09-20）
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）
