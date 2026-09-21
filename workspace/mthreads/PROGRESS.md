@@ -8,22 +8,28 @@
 
 ---
 
-## 🔴 正在后台运行的任务（**退出 session 不会中断**）
+## 🟢 当前状态：无后台任务在跑
 
-**reka-flash-3 重复性实验的 r1 组仍在跑**（r2/r3/r4 已完成，均 **58.0%**）。
-r1 复用原服务容器（GPU2），进程由 `docker exec -d` 拉起，**不依赖本 session**。
+**reka-flash-3 的重复性实验（5 轮）已于 2026-09-21 全部结束**，结论已收口（见下）。
+**所有评测进程均已退出，没有需要等待的后台任务。**
 
-| 组 | 服务容器 / GPU / 端口 | eval 容器 | 得分 | 状态 |
-|:--:|----------------------|-----------|:----:|------|
-| r1 | `flagrelease-fix-reka-flash-3` / GPU2 / 8002 | `eval-reka-flash-3` | ⏳ | 🔄 跑至 47/50 |
-| r2 | `flagrelease-fix-reka-flash-3-r2` / GPU0 / 8004 | `eval-reka-flash-3-r2` | **58.0%** | ✅ 完成 |
-| r3 | `flagrelease-fix-reka-flash-3-r3` / GPU1 / 8005 | `eval-reka-flash-3-r3` | **58.0%** | ✅ 完成（**采用轮**） |
-| r4 | `flagrelease-fix-reka-flash-3-r4` / GPU3 / 8006 | `eval-reka-flash-3-r4` | **58.0%** | ✅ 完成 |
+| 轮次 | 服务容器 / GPU / 端口 | 得分 | 状态 |
+|:----:|----------------------|:----:|------|
+| 原轮 | `flagrelease-fix-reka-flash-3` / GPU2 / 8002 | **50.0%** | ⏹️ 老容器**已停** |
+| r1 | 同上（同容器同进程） | **50.0%** | ⏹️ 同上 |
+| r2 | `...-r2` / GPU0 / 8004 | **58.0%** | 🟢 服务在跑 |
+| r3 | `...-r3` / GPU1 / 8005 | **58.0%** | 🟢 服务在跑 |
+| r4 | `...-r4` / GPU3 / 8006 | **58.0%** | 🟢 服务在跑 |
 
-**实验结论已出**：原轮 50.0% 是**采样下沿**，reka **改判达标**。
-完整结论、逐题对照与判定方法见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节。
+**实验结论**：5 轮同配置评测落成 **两簇**（`50,50 | 58,58,58`），**均值 54.8%**，
+**分簇原因未查明**（老容器已停，发起人决定不追）。
+判定**依基准而定**：按 metax 裁定的 53.54 → 达标；按表内 59 → 不达标。
+完整结论见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节，口径限定见报告发布字段注记。
 
-每组产物：`gpqa_50.json`、`eval_50.log`、`serve.log`，均在 `release_run_logs/reka-flash-3/repeat-r<组号>/`。
+> ⚠️ 老容器 `flagrelease-fix-reka-flash-3` **已停**（它对应原轮 + r1，也是唯一出 50% 的那一簇）。
+> **r2/r3/r4 三个服务仍在跑**（可直接接着做 198 题全量），各自的 eval 容器 1:1 绑定。
+> 每组产物：`release_run_logs/reka-flash-3/repeat-r<组号>/{gpqa_50.json,eval_50.log,serve.log}`
+> （r1 的产物在 `repeat-r1/`，原轮的在 `release_run_logs/reka-flash-3/` 根下）。
 
 **回来第一件事**：见文末「恢复工作」。
 
@@ -31,11 +37,14 @@ r1 复用原服务容器（GPU2），进程由 `docker exec -d` 拉起，**不�
 
 ## 当前状态一览
 
-### 服务（`mthreads-25`，2026-09-21 17:30）
+### 服务（`mthreads-25`，2026-09-21 17:45）
 
 | 服务 | 卡 | 端口 | 状态 |
 |------|:--:|:----:|------|
-| reka-flash-3 × 4（重复组 r1–r4） | GPU0/1/2/3 | 8002/8004/8005/8006 | 🟢 运行中（r1 评测收尾中） |
+| reka-flash-3（新容器 r2） | GPU0 | 8004 | 🟢 运行中 |
+| reka-flash-3（新容器 r3） | GPU1 | 8005 | 🟢 运行中 |
+| reka-flash-3（新容器 r4） | GPU3 | 8006 | 🟢 运行中 |
+| reka-flash-3（**老容器，已停**） | — | — | ⏹️ `docker stop`，2026-09-21 |
 | Phi-4-reasoning-plus | — | — | ⏹️ **容器已停**（`docker stop`，2026-09-21） |
 | LFM2.5-1.2B-Thinking | — | — | ⏹️ **容器已停** |
 | Qwen3.5-27B-Distilled | — | — | ⏹️ **容器已停** |
@@ -43,14 +52,14 @@ r1 复用原服务容器（GPU2），进程由 `docker exec -d` 拉起，**不�
 
 > 三个停掉的容器**保留未删**（`Exited (137)`），`docker start <容器>` 即可原样恢复；显存已确认归零。
 
-### 评测结果（50 题筛查口径，**4 个全部达标**）
+### 评测结果（50 题筛查口径）
 
 | 模型 | 得分 | NV 基线 | 判定 | 交付物 |
 |------|:----:|:-------:|:----:|--------|
 | Phi-4-reasoning-plus | **58.0%** | 46 | ✅ 达标 | [[reports/Phi-4-reasoning-plus_report]] |
 | LFM2.5-1.2B-Thinking | **32.0%** | 29.0 | ✅ 达标 | [[reports/LFM2.5-1.2B-Thinking_report]] |
 | Qwen3.5-27B-Distilled | **78.0%** | 75 | ✅ 达标 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
-| reka-flash-3 | **58.0%**（原轮 50.0%） | 59 / 53.54 | ✅ **达标**（重复实验改判） | [[reports/reka-flash-3_report]] |
+| reka-flash-3 | **54.8%**（5 轮均值） | 59 / 53.54 | ⚠️ **依基准而定** | [[reports/reka-flash-3_report]] |
 
 ---
 
@@ -77,7 +86,7 @@ r1 复用原服务容器（GPU2），进程由 `docker exec -d` 拉起，**不�
 
 | # | 事项 | 状态 |
 |---|------|------|
-| 1 | ~~reka-flash-3 定性（重复性实验）~~ | ✅ **已完成** —— 原轮 50.0% 判为采样下沿，**改判达标（58.0%）** |
+| 1 | ~~reka-flash-3 定性（重复性实验）~~ | ✅ **已完成** —— 5 轮落成两簇，均值 54.8%，分簇未归因 |
 | 2 | **4 个模型的 198 题全量定稿** | ⬜ **下一步** —— reka 服务在跑；另 3 个需先 `docker start` 恢复容器 |
 | 3 | **`mthreads-26` 连不上** | ❌ 等发起人确认（bastion 报 `match asset failed: No found asset`） |
 | 4 | Phi-4-reasoning-plus 的算子 A/B | ⬜ 未做（留白名单就已达标 +12pt，故未做） |
@@ -161,13 +170,27 @@ python3 -c "import json;d=json.load(open('repeat-r2/gpqa_50.json'));print({k:d.g
 
 ### 5. 下一步（重复性实验已收口）
 
-**结论**：reka-flash-3 改判**达标**（58.0%），50 题口径对本模型噪声达 8pt。
+**结论**：reka-flash-3 的 50 题口径**不足以定案**（5 轮落成两簇，噪声 8pt，
+且判定随基准翻转），**必须走 198 题全量**。
 
-- **4 个模型的 198 题全量定稿**（reka 尤其必须走全量）：
-  - reka-flash-3：4 个服务都在跑，直接复用（任选一个，改 `--limit 0`）
+- **4 个模型的 198 题全量定稿**：
+  - reka-flash-3：**r2/r3/r4 三个服务在跑**，直接复用（任选一个，改 `--limit 0`）；
+    ⚠️ **不要用老容器**（已停，且它是唯一出 50% 的那一簇）
   - Phi-4 / LFM2.5 / Qwen3.5：**先 `docker start` 恢复那 3 个服务容器**
-- 定稿判定仍用 `accuracy_compare.py`；**reka 的基准按 metax 裁定用 NV 原生 53.54**
-  （但 58.0% 对表内 59 也已达标，两种口径都过）。
+- 定稿判定仍用 `accuracy_compare.py`；**reka 的基准争议要在报告里写明**
+  （53.54 → 达标 / 59 → 不达标），全量结果出来后按同一基准复算。
+- ⚠️ **reka 全量建议多跑几组取分布**（两簇现象未归因，单轮全量仍可能偏）：
+
+  ```bash
+  # 三个服务可同时跑全量（198 题，约 11~13h）
+  for p in 8004 8005 8006; do
+    docker exec -d eval-reka-flash-3-r<对应> bash -lc "cd /datapool/flagrelease/eval_scripts && \
+      python3 -u fast_gpqa.py --model-name reka-flash-3 --api-base http://127.0.0.1:$p/v1 \
+      --dataset gpqa_diamond --dataset-dir /datapool/flagrelease/evalscope-datasets \
+      --limit 0 --eval-batch-size 1 \
+      --output /datapool/flagrelease/release_run_logs/reka-flash-3/run198-$p/gpqa.json > .../eval.log 2>&1"
+  done
+  ```
 
 ---
 
