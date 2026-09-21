@@ -1,0 +1,188 @@
+# iluvatar/Qwen2.5-72B-Instruct 修复日志
+
+- **失败报告**：无（`flagrelease_fail_reports/Iluvatar/` 下无该模型报告，2026-09-21 新增对象）
+- **原始失败类型**：未开始
+- **修复日期**：2026-09-21 起
+- **机器**：`iluvatar-139`（原定 117，2026-09-21 当天 117 被他人占用，改用 139）
+
+---
+
+## 背景分析
+
+Qwen2.5-72B-Instruct 是 Qwen2 系 dense decoder（`Qwen2ForCausalLM`），标准 GQA，**非 MLA**：
+
+```
+architectures=Qwen2ForCausalLM  model_type=qwen2
+hidden_size=8192  num_hidden_layers=80  num_attention_heads=64  num_key_value_heads=8
+vocab_size=152064  max_position_embeddings=32768  torch_dtype=bfloat16
+```
+
+- **不是推理模型**：名字不含 `qwen3`/`qwq` 等关键词，`generation_config.json` 虽写 `temperature=0.7`，
+  但 `fast_gpqa.detect_thinking()` 将其判定为 standard → `temperature=0.0` 贪心。
+  这与 QwQ/TinyR1 的情况不同——**Qwen2.5-Instruct 系列官方推荐的就是贪心解码**，
+  且历史上其他厂商（如 hygon/Qwen2.5-7B-Instruct）也是按 standard 口径评测，
+  **本模型不打算套用 thinking wrapper**（见「评测参数」节）。
+- **attention backend**：普通 GQA → **`TRITON_ATTN`**（不能用 `TRITON_MLA`）。
+- **TP 估算**：bf16 权重 ~145 GB ÷ 32 GB/卡 ≈ 4.5 → 向上取 2 的幂次 → **TP=8**（与 XingChen4 参考一致）。
+  8 卡总显存 256 GB，权重占 145 GB（57%），KV cache 与激活余 ~110 GB，
+  满足 SOP「每卡剩 30–40% 空余」。
+- **权重来源**：`Qwen/Qwen2.5-72B-Instruct`（ModelScope 官方仓库，一次命中，无需 HF 回退）。
+
+---
+
+## 环境
+
+| 项目 | 值 |
+|------|----|
+| 宿主机 | `iluvatar-139` |
+| 容器名 | `flagrelease-fix-qwen2.5-72b-instruct` |
+| 镜像 | `harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907` |
+| 模型路径 | `/models/flagrelease/fixes_models/Qwen2.5-72B-Instruct`（宿主 `/mnt/share/models/...`） |
+| 卡号 | `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`（TP=8） |
+| 端口 | 8015 |
+| attention-backend | `TRITON_ATTN`（Qwen2 GQA，非 MLA） |
+| 评测指标 | `gpqa_diamond`（NV 基线 **56.0**，`nv_baseline.yaml` 有该指标，无需回退） |
+| 实际 vLLM 版本 | 0.24.0（vllm_fl 0.24.0） |
+
+---
+
+## Step 0：登录 + 查卡
+
+```bash
+ssh iluvatar-139
+/usr/local/corex-4.5.0/bin/ixsmi          # ⚠️ 宿主机 PATH 里没有 ixsmi，必须写全路径
+docker ps --format '{{.Names}}\t{{.Status}}'
+```
+
+> ⚠️ **本机两个与 SOP 不同的实测点**（已回写 `ENV.md`）：
+> 1. 宿主机 `ixsmi` **不在 PATH 里**，裸敲报 `command not found` → 用 `/usr/local/corex-4.5.0/bin/ixsmi`。
+> 2. **修复容器（xingchen4-0907）里根本没有 `ixsmi` 二进制**（`find / -name "*smi*"` 只有无关文件，
+>    `/usr/local/corex/bin` 下是 clang/ixgdb 等编译器工具链）。容器内查卡改用 torch：
+>    ```bash
+>    python -c "import torch; [print(i, torch.cuda.get_device_properties(i).name, round(torch.cuda.get_device_properties(i).total_memory/1024**3,1)) for i in range(torch.cuda.device_count())]"
+>    ```
+>    实测：**16 × Iluvatar BI-V150 32 GB**，`torch.cuda.device_count()==16`，`is_available()==True`。
+
+起容器前的占用检查：`ixsmi` 显示 16 张卡全部 `68MiB / 32768MiB`、零进程 → 全机空闲可用。
+
+---
+
+## Step 1：起容器
+
+```bash
+IMAGE=harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907
+model_name=qwen2.5-72b-instruct
+docker run -itd --name flagrelease-fix-${model_name} \
+  --device=/dev/iluvatar0  --device=/dev/iluvatar1  --device=/dev/iluvatar2  --device=/dev/iluvatar3 \
+  --device=/dev/iluvatar4  --device=/dev/iluvatar5  --device=/dev/iluvatar6  --device=/dev/iluvatar7 \
+  --device=/dev/iluvatar8  --device=/dev/iluvatar9  --device=/dev/iluvatar10 --device=/dev/iluvatar11 \
+  --device=/dev/iluvatar12 --device=/dev/iluvatar13 --device=/dev/iluvatar14 --device=/dev/iluvatar15 \
+  --device=/dev/itrctl --device=/dev/itrlink --device=/dev/itr_peerm_dev0 \
+  --ipc=host --network=host --shm-size 64g \
+  -v /mnt/share/models:/models \
+  ${IMAGE} bash
+docker exec -it flagrelease-fix-${model_name} bash
+```
+
+自检：`python -c "import vllm; print(vllm.__version__)"` → **0.24.0**；`torch.cuda.device_count()` → **16**。
+
+---
+
+## Step 2：下载模型权重
+
+ModelScope 一次命中（无 404，**无需 HF 回退**）：
+
+```bash
+docker exec -d eval-scope bash -c "
+modelscope download --model Qwen/Qwen2.5-72B-Instruct \
+  --local_dir /models/flagrelease/fixes_models/Qwen2.5-72B-Instruct \
+  > /models/flagrelease/fixes_models/Qwen2.5-72B-Instruct_download.log 2>&1 &
+"
+```
+
+- 权重 **37 个 `model-XXXXX-of-00037.safetensors` 分片 + 37 个 `.incomplete` 影子文件**，合计 ~145 GB。
+  ⚠️ **别用 `ls *.safetensors | wc -l` 判断"下完了没有"** —— `.incomplete` 文件不匹配该 glob，
+  分片数是**边下边落盘**的，下载中途就会看到非零值。**唯一可靠的判据是 `modelscope download` 进程还在不在。**
+- 实测下载速率受每分片并发数影响波动较大：日志里单分片速度 17–28 MB/s，
+  但落盘总量速率可达 **~5 GB/min**（多分片并发）。145 GB 约 **30 分钟**下完。
+
+---
+
+## Step 3：起 vLLM 服务（iter1）
+
+```bash
+docker exec -d flagrelease-fix-qwen2.5-72b-instruct bash -c "
+export GEMS_VENDOR=iluvatar
+export VLLM_PLUGINS=fl
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=72000
+export VLLM_RPC_TIMEOUT=72000000
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
+model_name=Qwen2.5-72B-Instruct
+mkdir -p /models/release_run_logs/\${model_name}
+nohup vllm serve /models/flagrelease/fixes_models/\${model_name} \
+  --served-model-name \${model_name} --dtype bfloat16 \
+  --tensor-parallel-size 8 --gpu-memory-utilization 0.9 \
+  --max-model-len 32768 \
+  --port 8015 --attention-backend TRITON_ATTN \
+  --enforce-eager --trust-remote-code \
+  > /models/release_run_logs/\${model_name}/serve_iter1.log 2>&1 &
+echo \$! > /models/release_run_logs/\${model_name}/serve_iter1.pid
+"
+```
+
+**iter1 配置取舍说明：**
+
+- **`--max-model-len 32768`（显式给满）**：模型 `max_position_embeddings=32768`，显式给满有两个好处——
+  ① 避开 Phi-4-mini 那种「vLLM 自动推导出 4096 → `auto_max_tokens` 把 `max_tokens` 压到 2048 → 大量截断」的坑；
+  ② standard 分支下 `auto_max_tokens = clamp(max_model_len-8192, 4096, 32768) = 24576`，
+  对 GPQA 单题输出（通常 <2K token）绰绰有余。**不套用 Qwen3.5-27B 的 65536**：那是为了撑 thinking 的 20000 上限，
+  Qwen2.5 是 standard 分支用不到。
+- **`--enforce-eager` 暂留**：STATUS「新发现 0」明确 `--enforce-eager` 是性能杀手（Fathom/MiroThinker 去掉后提速 5–31×）。
+  但那是**排查吞吐问题**时的第一优先级；本模型 iter1 的首要目标是**先把分数基线打出来**，
+  eager 是已知能起服务的稳定路径。**若 iter1 分数达标且耗时不可接受，再切 graph 模式做迭代**（见「迭代记录」）。
+- **黑名单只用 `sort,sort_stable`**：Qwen3.5-27B 额外加了 `mm,addmm`，但那是**为了精度**（它的具体诉求）；
+  TinyR1 iter2 已证明 `mm,addmm` 黑名单**无效**。故本模型 iter1 从最小黑名单起步，
+  只在真正遇到崩溃（`broadcast_to` 等 graph 捕获报错）或有证据的精度诉求时才加。
+
+---
+
+## Step 4：GPQA 评测 + 达标判定
+
+```bash
+docker exec eval-scope bash -c "
+cd /workspace/eval_scripts
+python3 fast_gpqa.py --model-name Qwen2.5-72B-Instruct \
+  --api-base http://127.0.0.1:8015/v1 \
+  --output /models/release_run_logs/Qwen2.5-72B-Instruct/gpqa.json
+python3 accuracy_compare.py \
+  --v2 /models/release_run_logs/Qwen2.5-72B-Instruct/gpqa.json \
+  --nv-baseline Qwen2.5-72B-Instruct \
+  --nv-baseline-file nv_baseline.yaml --json \
+  --output /models/release_run_logs/Qwen2.5-72B-Instruct/verdict_gpqa_iter1.json
+"
+```
+
+达标口径：`(v2 - 56.0) / 56.0 ≥ -5%`，即 **≥ 53.2%** 判达标（50 题，另有小样本容忍：绝对差 ≤2 题）。
+
+---
+
+## 迭代记录
+
+| iter | 配置 | GPQA | vs 56.0 | runaway / 截断 | 判定 |
+|:----:|------|:----:|:-------:|:---:|:---:|
+| 1 | TP=8 / TRITON_ATTN / eager / mlen=32768 / bl=sort,sort_stable | *(见下)* | | | |
+
+---
+
+## 结果
+
+*(待评测完成后填写)*
+
+---
+
+## 提炼到 KNOWLEDGE 的条目
+
+*(待填写)*

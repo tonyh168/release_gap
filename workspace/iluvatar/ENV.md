@@ -6,11 +6,12 @@
 
 | 项目 | 值 | 说明 |
 |------|----|----|
-| GPU | 天数 BI 系列（corex 生态），单机多卡 | 参考模型 XingChen4 用 TP=8（卡 8~15） |
-| 宿主机（ssh 免密） | `iluvatar-117` `iluvatar-211` | |
+| GPU | 天数 BI 系列（corex 生态），单机多卡 | 参考模型 XingChen4 用 TP=8（卡 8~15）。**139 实测 16 × Iluvatar BI-V150 32 GB**（共 512 GB） |
+| 宿主机（ssh 免密） | `iluvatar-117` `iluvatar-211` `iluvatar-139` `iluvatar-147` | **2026-09-21 起主力用 `iluvatar-139`**（当日 117 被他人占用） |
 | 设备节点 | `/dev/iluvatar` | 启容器时透传（见模板 01） |
-| 驱动自检 | `ixsmi` | |
-| 共享存储 | 宿主机模型盘 → 容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`） | |
+| 驱动自检 | `/usr/local/corex-4.5.0/bin/ixsmi` | ⚠️ **宿主机 PATH 里没有 `ixsmi`**，裸敲报 `command not found`，必须写全路径 |
+| 容器内查卡 | `python -c "import torch; ..."` | ⚠️ **修复容器里没有 `ixsmi` 二进制**（`find / -name "*smi*"` 无果；`/usr/local/corex/bin` 是 clang/ixgdb 编译器工具链）。容器内查卡一律用 torch：`[print(i, torch.cuda.get_device_properties(i).name, round(torch.cuda.get_device_properties(i).total_memory/1024**3,1)) for i in range(torch.cuda.device_count())]` |
+| 共享存储 | 宿主机模型盘 → 容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`） | NFS 挂载点 `/mnt/share`（67 TB，2026-09-21 实测用 90%） |
 
 ## 软件栈（FlagOS，报告实测版本）
 

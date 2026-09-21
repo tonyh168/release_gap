@@ -1,12 +1,14 @@
 # Iluvatar 模型修复状态总览
 
-> 更新：2026-09-20 00:40（graph 模式跑通，**Fathom 与 MiroThinker 双双达标**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
+> 更新：2026-09-21 19:10（**新增对象 Qwen2.5-72B-Instruct 开工**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
 
 ## 当前计数
 
-**10 通过 / 6 跳过 / 2 待继续修复 = 18**
+**10 通过 / 6 跳过 / 2 待继续修复 / 1 修复中 = 19**
 
 - **✅ 已通过（10）**、**⏭️ 跳过无需修复（6）**：见状态表，**均以机器上 `verdict_*.json` 的 `aligned` 字段核对过**
+- **🔧 修复中（1）** —— **Qwen2.5-72B-Instruct**（2026-09-21 新增，原定 117，因 117 被占用改用 139）。
+  权重 145 GB / TP=8 / GPU 0-7 / :8015 / `TRITON_ATTN` / eager / mlen=32768，iter1 评测待出分
 - **🔧 待继续修复（2）** —— 两者都在排除法上走到尽头，剩余差距无法归因：
   - ❌ **OpenReasoning-Nemotron-1.5B** — math_500 **76.0%** vs 84.0%（↓9.52%）。
     **iter4 抬 `max_tokens` 到 65536 → 无效（76.5%→76.0%）**，**截断假设被证伪**。
@@ -150,6 +152,7 @@
 | OpenReasoning-Nemotron-1.5B | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 52.21 / 84.0 | mmlu 35.0%（iter1）; math_500 76.5%（iter2）→ 73.5%（iter3 thinking）→ **76.0%（iter4 抬 mt=65536，↓9.52%）** | `flagrelease-fix-openreasoning-nemotron-1.5b` GPU 0 / :8011 (u139) | **五项假设全部排除**（权重 sha256 一致 / 上下文 131072 / 并发 / 采样 iter3 反降 / **截断 iter4 抬上限无效**）。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度（逐组开关黑名单做对照）；mmlu 需干净重测**。⚠️ 别再调 max_tokens/采样 |
 | Phi-4-mini-reasoning | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 72.83 / 88.2 | mmlu 58.07%（iter1，**受 2048 截断污染**）/ math_500 41.0%（同污染）→ 59.5%（iter3，`--max-model-len 32768` + c8）→ **62.0%（iter4，T=0.8/0.95，↓29.71%）** | `flagrelease-fix-phi4-mini-reasoning` GPU 9 / :8012 (u139) | **截断已修**（+18.5pt）；**采样已修但只 +2.5pt** —— 复读 31→2（−94%）、撞顶 32→9（−72%），**行为改善巨大但分数没上来** → **采样不是主因**。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度；mmlu 需干净重测**。⚠️ 别再调采样/max_model_len |
 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | ✅ 已通过 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%）→ iter2: **80.0**（↑6.67%，反超基线）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | 完成，达标。iter2 配置：sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2，`--max-model-len 65536`（iter1 为 8192，把 max_tokens 压到 4096）。verdict 为 2026-09-18 实跑重建（`verdict_gpqa_iter2.json`，exit=0） |
+| Qwen2.5-72B-Instruct | 🔧 修复中 | 未开始（2026-09-21 新增对象） | gpqa_diamond | 56.0 | iter1 评测中 | `flagrelease-fix-qwen2.5-72b-instruct` GPU 0-7 / :8015 (u139) | **2026-09-21 开工**。Qwen2 dense GQA（80层/hidden 8192/8 KV heads），bf16 145 GB → **TP=8**；`TRITON_ATTN`（非 MLA）；**standard 分支（非推理模型，不套 thinking wrapper）**；mlen=32768 显式给满以避开 `auto_max_tokens` 截断坑。**原定 117，当日 117 被占用 → 改用 139** |
 
 ---
 
