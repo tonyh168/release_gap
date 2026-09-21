@@ -1,3 +1,16 @@
+# Nanbeige4.1-3B 评测脚本完整留档
+
+## 来源与用途
+
+来源于仓库留存的 `workspace/t-head/fixes/fast_gpqa.py`，包含 `_extract_explicit_mcq_answer` 的行级保守答案抽取修复。当前堡垒机未能定位 T-Head 远端资产，因此尚未证明该快照与远端运行文件逐字节一致。
+
+## 复现方式
+
+将代码块完整保存为 `fast_gpqa.py`，替换前先与远端 `fast_gpqa.py.bak_20260918_nanbeige_extract` 做 diff。修复后必须重新生成预测，不能只对旧结果重新判分。
+
+## 完整代码
+
+```python
 #!/usr/bin/env python3
 
 # Copyright 2026 FlagOS Contributors
@@ -80,9 +93,18 @@ THINKING_PATTERNS = [
 # Magistral 官方模型卡要求显式启用 reasoning trace，并推荐使用采样解码。
 # generation_config.json 未携带这些字段，不能把缺省值解释成贪心解码。
 MAGISTRAL_SYSTEM_PROMPT = (
-    "A user will ask you to solve a task. First reason inside <think> and </think>. "
-    "Then provide a concise self-contained final answer. The last line must be "
-    "ANSWER: [LETTER]."
+    "A user will ask you to solve a task. You should first draft your thinking "
+    "process (inner monologue) until you have derived the final answer. "
+    "Afterwards, write a self-contained summary of your thoughts (i.e. your "
+    "summary should be succinct but contain all the critical steps you needed "
+    "to reach the conclusion). You should use Markdown and Latex to format your "
+    "response. Write both your thoughts and summary in the same language as the "
+    "task posed by the user.\n\nYour thinking process must follow the template "
+    "below:\n\n<think>\n\nYour thoughts or/and draft, like working through "
+    "an exercise on scratch paper. Be as casual and as long as you want until "
+    "you are confident to generate a correct answer.\n\n</think>\n\nHere, "
+    "provide a concise summary that reflects your reasoning and presents a clear "
+    "final answer to the user.\n\nProblem:"
 )
 
 # thinking 模型 max_tokens 上限。正常思考链输出一般几千~一万多 token 封顶，
@@ -1547,3 +1569,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+```

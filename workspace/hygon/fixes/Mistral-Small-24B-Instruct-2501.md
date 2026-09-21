@@ -145,6 +145,10 @@ model:
 /flagos-workspace/shared/context.yaml
 ```
 
+可直接合并进 `context.yaml` 的完整配置片段已嵌入 [file_fixes/Mistral-Small-24B-Instruct-2501.md](file_fixes/Mistral-Small-24B-Instruct-2501.md)。本模型没有伪造 Python 代码，因为当时未修改评测脚本。
+
+这一步修改的是评测容器配置，**没有改 `fast_gpqa.py` 文件**。评测脚本的实际读取路径为：若 `--model-name` 自身是本地目录则直接使用，否则读取 `context.yaml` 的 `model.local_path` 或 `model.container_path`，仅在该目录存在时打开其 `generation_config.json`；从中选取合法数值的 `temperature`、`top_p`、`top_k`、`repetition_penalty` 覆盖默认生成参数（不让模型文件覆盖 `max_tokens`、`stream`、`timeout`）。因此仅传服务别名时读不到模型配置；加上上述容器内目录后才读取到 `temperature=0.15`。该处理逻辑可在仓库留存的 [fast_gpqa.py](../../t-head/fixes/fast_gpqa.py) 中查阅，但此链接指向留存版本，不代表已比对本轮 Hygon 容器内脚本的字节一致性。
+
 首轮达标日志中已确认：
 
 ```text

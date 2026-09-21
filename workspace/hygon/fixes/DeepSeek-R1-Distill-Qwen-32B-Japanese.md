@@ -7,6 +7,8 @@
 - **历史问题类型**：按普通模型使用贪心解码和较短生成上限时精度不达标，并出现重复输出撞 `max_tokens`
 - **本次处理结论**：使用 Hygon 新镜像、4 卡 TP 部署，服务侧关闭 prefix cache、chunked prefill、FlagGems attention 和 OOT；评测侧按模型 `generation_config.json` 使用 thinking 采样参数 `temperature=0.6`、`top_p=0.95`，并固定 `max_tokens=16384`。GPQA Diamond 50 题得分 `66.00%（33/50）`，高于 NV 基线 `62.00%`，绝对提升 `4` 个百分点，相对提升约 `6.45%`，按 NV 相对退化不超过 5% 的门限通过
 
+- **2026-09-20 追加验证**：恢复上述同一服务配置后，仅将评测并发由 2 调到 8，50 题得到 `72.00%（36/50）`，耗时 `7464.34s`（约 2h 04m 24s），相对原 `24982.68s` 加速 `3.35×`；比 NV `62%` 高 10 个百分点，仍通过。采样解码的单轮分数波动不能解释为并发提升模型精度，详见下方独立复测记录。
+
 ---
 
 ## 背景分析
@@ -206,6 +208,8 @@ curl http://127.0.0.1:8005/v1/models
 /models/day0_eval/fast_gpqa_genconfig_fixed.py
 ```
 
+从远端评测容器只读导出的完整脚本已嵌入 [file_fixes/DeepSeek-R1-Distill-Qwen-32B-Japanese.md](file_fixes/DeepSeek-R1-Distill-Qwen-32B-Japanese.md)。该文档保留完整评测流程代码，不是仅含修改片段。
+
 该脚本基于统一评测脚本 `/models/day0_eval/fast_gpqa.py`。专用脚本通过模型名映射固定本模型参数：
 
 ```python
@@ -217,6 +221,26 @@ _GEN_OVERRIDES = {
     },
 }
 ```
+
+只读比对远端 `day0-eval-standard` 中 `/models/day0_eval/fast_gpqa.py` 与 `fast_gpqa_genconfig_fixed.py` 后确认：修改插在 `run_eval` 构建 `gen_config = resolve_gen_params(is_thinking, max_tokens, model_path=model_name)` 之后、构建 `dataset_args` 之前。专用脚本实际包含如下逻辑（映射表还包含 MiniCPM4.1 和 Light-R1；此处保留全部键，以免复现时误认为只改了本模型）：
+
+```python
+_model_key = str(model_name).split('/')[-1]
+_GEN_OVERRIDES = {
+    'MiniCPM4-8B': {'temperature': 0.8, 'top_p': 0.8},
+    'MiniCPM4.1-8B': {'temperature': 0.8, 'top_p': 0.8},
+    'DeepSeek-R1-Distill-Qwen-32B-Japanese': {'temperature': 0.6, 'top_p': 0.95, 'max_tokens': 16384},
+    'Light-R1-7B-DS': {'temperature': 0.6, 'top_p': 0.95, 'max_tokens': 20000},
+}
+if _model_key in _GEN_OVERRIDES:
+    for _k, _v in _GEN_OVERRIDES[_model_key].items():
+        if _k == 'max_tokens':
+            max_tokens = int(_v)
+        gen_config[_k] = _v
+    print(f"  [gen] applied embedded model config for {_model_key}: temperature={gen_config.get('temperature')}, top_p={gen_config.get('top_p')}, max_tokens={gen_config.get('max_tokens')}")
+```
+
+`max_tokens` 同时更新局部变量和 `gen_config`；只改字典或只改 CLI 参数都不能复现该脚本行为。远端 `diff -u` 显示专用脚本相对原脚本仅增加这一段；`remove_until: </think>` 属于原脚本已有的 thinking 模式逻辑，不是这次新增的代码。
 
 thinking 模型同时应用 EvalScope 过滤：
 
@@ -383,6 +407,33 @@ DeepSeek-R1-Distill-Qwen-32B-Japanese:
 7. 固定并发为 2，执行 GPQA Diamond 50 题；
 8. 保存 EvalScope 原始报告、答案抽取审计和 runaway 扫描结果；
 9. 与 NV `62.00%` 基线按 5% 相对退化门限比较，最终判定通过。
+
+## 追加复测：旧最优服务 + eval_batch_size=8（2026-09-20）
+
+先试验的另一套配置（prefix cache 开启、去掉 `--enforce-eager`、`gpu-memory-utilization=0.75`）虽在 `3858.66s` 完成 50 题，但仅得 `54%`，低于 NV 基线；`0.90/0.85` 在非 eager 图捕获阶段发生 HIP OOM。这是**不同服务配置**，不得将其速度或分数归因于评测并发。随后停止该服务并恢复本文件 Step 2 的已通过配置：TP4、GPU 0–3、`gpu-memory-utilization=0.90`、`--enforce-eager`、`--no-enable-prefix-caching`、`--no-enable-chunked-prefill`，其余环境变量不变。服务日志确认 `enforce_eager=True`、`enable_prefix_caching=False`、`enable_chunked_prefill=False`，KV cache 为 621440 tokens。
+
+仅将 Step 4 的评测命令改为 `--eval-batch-size 8`，继续使用同一 `fast_gpqa_genconfig_fixed.py`、`temperature=0.6`、`top_p=0.95`、`max_tokens=16384`、GPQA Diamond 50 题及 `--skip-truncation-check`。本轮未修改模型、vLLM、插件或评测脚本源码；新日志与结果独立保存：
+
+```bash
+python3 /models/day0_eval/fast_gpqa_genconfig_fixed.py \
+  --model-name DeepSeek-R1-Distill-Qwen-32B-Japanese \
+  --api-base http://127.0.0.1:8005/v1 --api-key EMPTY \
+  --dataset gpqa_diamond --limit 50 --eval-batch-size 8 \
+  --skip-truncation-check \
+  --output /models/day0_logs/accuracy/DeepSeek-R1-Distill-Qwen-32B-Japanese-gpqa50-best-batch8-20260920-04.json
+```
+
+| 指标 | 原 batch=2 | 本轮 batch=8 |
+|------|---:|---:|
+| GPQA Diamond | 66%（33/50） | **72%（36/50）** |
+| NV 基线 | 62% | 62% |
+| 用时 | 24982.68s | 7464.34s（约 2h 04m） |
+| 相对原轮加速 | — | **3.35×** |
+| runaway | 0 | 0 |
+| 显式答案 / 解析差异 | 50/50、0 | 50/50、0 |
+| 截断探测 | 跳过 | 跳过 |
+
+本轮 `exit=0`，EvalScope 原始分与答案审计分均为 `72%`；运行中曾观测到 8 个请求同时执行、0 排队，没有容量错误。结果和日志分别为同名 `.json`、`.log`、`.exit`，宿主机目录 `/public-flash/models/day0_logs/accuracy/`；EvalScope 原始工作目录为 `outputs/gpqa_diamond/20260920_102140`。**72% 是本轮抽样观测值，不是并发提高带来的确定性精度增益**；NV 基线未附同口径逐题记录，尚不能断言严格逐题对齐。
 
 ## 通用经验
 

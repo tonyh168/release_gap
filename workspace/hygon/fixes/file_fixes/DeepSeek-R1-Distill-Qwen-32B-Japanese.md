@@ -1,3 +1,31 @@
+# DeepSeek-R1-Distill-Qwen-32B-Japanese 评测脚本完整留档
+
+## 来源与用途
+
+来源于 Hygon 远端 `day0-eval-standard` 容器的 `/models/day0_eval/fast_gpqa_genconfig_fixed.py`。该脚本在统一 GPQA 评测器基础上增加模型名到生成参数的显式映射；本模型使用 `temperature=0.6`、`top_p=0.95`、`max_tokens=16384`。这是完整文件快照，不是 diff。
+
+## 涉及文件与 2026-09-20 复测变更边界
+
+| 文件或运行项 | 作用 | 本轮是否修改内容 |
+|------|------|------|
+| `/models/day0_eval/fast_gpqa_genconfig_fixed.py` | 本文完整快照；相对通用 `fast_gpqa.py` 新增 `_GEN_OVERRIDES`，含本模型采样参数与 16384 token 上限 | **否**，沿用已存在的专用脚本 |
+| `/models/day0_eval/fast_gpqa.py` | 原始统一评测脚本，thinking 的 `remove_until: </think>` 已在其中 | 否 |
+| `/models/DeepSeek-R1-Distill-Qwen-32B-Japanese/generation_config.json` | 模型自带 `do_sample=true`、`temperature=0.6`、`top_p=0.95` | 否 |
+| `/models/day0_eval/nv_baseline.yaml` | NV GPQA 参考值 62% | 否 |
+| 推理容器中的 vLLM、vllm-plugin-FL、FlagGems 及模型权重 | 既有已通过的 eager/TP4 服务 | 否 |
+| 评测启动命令 `--eval-batch-size 8` | 原来为 2，仅此客户端并发参数变化 | **仅运行参数变化，无源码修改** |
+
+专用脚本映射中本模型的实际代码为 `{'temperature': 0.6, 'top_p': 0.95, 'max_tokens': 16384}`；其余模型映射同在下方完整代码内。当前 50 题复测以 `exit=0`、`72%（36/50）` 完成，耗时 `7464.34s`、runaway 0、显式答案 50/50、解析差异 0；结果位于 `/public-flash/models/day0_logs/accuracy/DeepSeek-R1-Distill-Qwen-32B-Japanese-gpqa50-best-batch8-20260920-04.json`（同名 `.log`、`.exit`）。相关适配与对比见 [fixes 记录](../DeepSeek-R1-Distill-Qwen-32B-Japanese.md)和[评测报告](../../reports/DeepSeek-R1-Distill-Qwen-32B-Japanese_report.md)。
+
+注意评测容器的 `python3` 需在进程中设置 DTK `LD_LIBRARY_PATH` 才能导入 Torch/EvalScope；启动不改变容器镜像。完整脚本留档是已有远端文件的快照，不应把保存快照误记为此次对远端源码做了新修改。
+
+## 复现方式
+
+将代码块完整保存为 `fast_gpqa_genconfig_fixed.py`，在具有相同依赖和数据目录的评测容器中执行。复现前应确认服务模型名与映射键完全一致。
+
+## 完整代码
+
+```python
 #!/usr/bin/env python3
 
 # Copyright 2026 FlagOS Contributors
@@ -74,16 +102,7 @@ THINKING_PATTERNS = [
     'minicpm4.1',
     'mimo',
     'hunyuan',
-    'magistral',
 ]
-
-# Magistral 官方模型卡要求显式启用 reasoning trace，并推荐使用采样解码。
-# generation_config.json 未携带这些字段，不能把缺省值解释成贪心解码。
-MAGISTRAL_SYSTEM_PROMPT = (
-    "A user will ask you to solve a task. First reason inside <think> and </think>. "
-    "Then provide a concise self-contained final answer. The last line must be "
-    "ANSWER: [LETTER]."
-)
 
 # thinking 模型 max_tokens 上限。正常思考链输出一般几千~一万多 token 封顶，
 # 真正会吃满上限的几乎必然是 runaway 复读死循环（Qwen3-30B 事故: 24576 token
@@ -417,15 +436,6 @@ def detect_runaway(text: str, finish_reason: str = "") -> Tuple[bool, Dict]:
         evidence = {"diversity": float, "compress_ratio": float, "text_len": int,
                     "finish_reason": str, "reason": str}
     """
-    # thinking 模型的 message.content 可能是多段结构（list），需拼接为纯文本
-    if isinstance(text, list):
-        parts = []
-        for p in text:
-            if isinstance(p, str):
-                parts.append(p)
-            elif isinstance(p, dict):
-                parts.append(p.get("text") or p.get("content") or "")
-        text = "".join(parts)
     text = (text or "").strip()
     evidence = {
         "diversity": 1.0,
@@ -521,27 +531,20 @@ def analyze_predictions_runaway(work_dir: str, model_id: str, dataset: str = 'gp
 
 
 def _extract_explicit_mcq_answer(text: str) -> Optional[str]:
-    """从模型明确的 Answer/Option 结论标记中提取选项字母。
+    """从模型明确的 Answer 标记中提取选项字母。
 
-    只接受行级、结论性表达，避免从长推理正文里按单词首字母误抓。
-    Nanbeige4.1-3B 在 GPQA 上经常吃满 max_tokens，未写出最终
-    ``ANSWER: [X]``，但会在截断前写出 ``So answer A`` 这类明确
-    结论；这类表达可作为保守校正，非结论句不猜。
+    EvalScope 1.6.1 会将 ``**Answer:** C) ...`` 误提取为后续单词的
+    字母。这里只识别显式 Answer 标记，避免从推理正文中猜测答案。
     """
     normalized = (text or "").replace("*", "").replace("_", "")
     patterns = (
         r"(?im)^\s*[-+>]?\s*(?:final\s+)?answer\s*:\s*(?:is\s+)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
-        r"(?im)^\s*[-+>]?\s*(?:the\s+)?(?:correct\s+)?answer\s+is\s+(?:option\s*)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
-        r"(?im)^\s*(?:therefore|thus|so|hence|conclusion)[:,]?\s*(?:the\s+)?(?:final\s+)?answer\s+(?:should\s+be|is)\s+(?:option\s*)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
-        r"(?im)^\s*(?:therefore|thus|so|hence|conclusion)[:,]?\s*(?:answer|option)\s+[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+        r"(?im)^\s*[-+>]?\s*(?:the\s+)?(?:correct\s+)?answer\s+is\s+[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
     )
     matches = []
     for pattern in patterns:
-        for match in re.finditer(pattern, normalized):
-            matches.append((match.start(), match.group(1)))
-    if not matches:
-        return None
-    return sorted(matches)[-1][1].upper()
+        matches.extend(re.findall(pattern, normalized))
+    return matches[-1].upper() if matches else None
 
 
 def analyze_mcq_answer_extraction(
@@ -859,9 +862,14 @@ def parse_result(result: Dict) -> Tuple[Optional[float], Dict]:
         return None, result or {}
 
     for key, val in result.items():
-        # Report 对象 → 转 dict，再走统一的递归搜索
+        # Report 对象 → 转 dict
         if hasattr(val, 'to_dict'):
-            val = val.to_dict()
+            val_dict = val.to_dict()
+            score = val_dict.get('score')
+            if score is not None:
+                pct = score * 100 if score <= 1.0 else score
+                return round(pct, 2), val_dict
+
         if isinstance(val, dict):
             score = _find_score(val)
             if score is not None:
@@ -872,14 +880,8 @@ def parse_result(result: Dict) -> Tuple[Optional[float], Dict]:
 
 
 def _find_score(d: dict, depth: int = 0) -> Optional[float]:
-    """递归查找 score/accuracy 字段（支持嵌套 dict 和 list）。
-
-    evalscope 1.5.1 将分数放在顶层 dict 的 score/accuracy 字段；
-    evalscope 1.11.1 (schema_version=2) 将分数放在 metrics 列表项里：
-    metrics[0].score = 0.28（0–1 范围）。
-    旧版只递归 dict 值，新版需同时递归 list 内的 dict 项。
-    """
-    if depth > 4:
+    """递归查找 score/accuracy 字段。"""
+    if depth > 3:
         return None
     for key in ('score', 'accuracy', 'acc', 'mean_acc'):
         if key in d and isinstance(d[key], (int, float)):
@@ -889,45 +891,6 @@ def _find_score(d: dict, depth: int = 0) -> Optional[float]:
             s = _find_score(val, depth + 1)
             if s is not None:
                 return s
-        elif isinstance(val, list):
-            for item in val:
-                if isinstance(item, dict):
-                    s = _find_score(item, depth + 1)
-                    if s is not None:
-                        return s
-    return None
-
-
-def _read_score_from_workdir(work_dir: str, model_id: str, dataset: str) -> Optional[float]:
-    """从 evalscope 输出目录直接读取报告 JSON，作为 parse_result 的兜底。
-
-    evalscope 1.11.1 将报告写到 {work_dir}/reports/{model_id}/{dataset}.json，
-    格式为 schema_version=2，分数在 metrics[0].score（0–1 范围）。
-    任何异常都静默返回 None，不影响主流程。
-    """
-    import glob as _glob
-    candidates = [os.path.join(work_dir, 'reports', model_id, f'{dataset}.json')]
-    for path in candidates:
-        try:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            score = _find_score(data)
-            if score is not None:
-                pct = score * 100 if score <= 1.0 else score
-                return round(pct, 2)
-        except Exception:
-            pass
-    # glob 兜底：子目录名可能因版本差异不同
-    for path in _glob.glob(os.path.join(work_dir, 'reports', '**', f'{dataset}.json'), recursive=True):
-        try:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            score = _find_score(data)
-            if score is not None:
-                pct = score * 100 if score <= 1.0 else score
-                return round(pct, 2)
-        except Exception:
-            pass
     return None
 
 
@@ -989,13 +952,6 @@ def resolve_gen_params(is_thinking: bool, max_tokens: int,
     else:
         cfg = {'max_tokens': max_tokens, 'temperature': 0.0, 'top_p': 1.0,
                'stream': True, 'timeout': 120000, 'n': 1}
-
-    # Magistral-Small-2506 的模型卡明确推荐 temperature=0.7、top_p=0.95，
-    # 但随权重提供的 generation_config.json 没有这两个字段。这里按模型族
-    # 显式补齐，避免落入 thinking 通用默认或 standard 贪心路径。
-    if model_path and 'magistral' in str(model_path).lower():
-        cfg['temperature'] = 0.7
-        cfg['top_p'] = 0.95
 
     # 2) best-effort 读模型配置覆盖采样字段（全程不 raise）
     try:
@@ -1059,7 +1015,6 @@ def run_fast_gpqa(
     output_path: Optional[str] = None,
     eval_batch_size: Optional[int] = None,
     skip_truncation_check: bool = False,
-    max_tokens_override: Optional[int] = None,
 ) -> Dict:
     """
     快速精度评测主流程（GPQA Diamond / MMLU / MATH-500）。
@@ -1095,17 +1050,11 @@ def run_fast_gpqa(
     # Step 2: 自动设 max_tokens（基于 max_model_len 动态计算；多模态放大 prompt 预留）
     max_tokens, max_model_len = auto_max_tokens(api_base, api_key, model_name, is_thinking,
                                                 is_multimodal=is_multimodal)
-    if max_tokens_override is not None:
-        if max_tokens_override < 1:
-            raise ValueError("max_tokens must be >= 1")
-        max_tokens = max_tokens_override
-        print(f"  max_tokens: {max_tokens} (命令行显式指定)")
     if max_model_len:
         print(f"  max_model_len: {max_model_len} (从服务端获取)")
     else:
         print(f"  max_model_len: 未知 (使用 fallback)")
-    if max_tokens_override is None:
-        print(f"  max_tokens: {max_tokens}")
+    print(f"  max_tokens: {max_tokens}")
 
     # Step 3: 截断检测 — 发样题检查 finish_reason
     # thinking 模型翻倍重试受 THINKING_MAX_TOKENS_CAP 约束（防线1）
@@ -1116,12 +1065,9 @@ def run_fast_gpqa(
         trunc_cap = THINKING_MAX_TOKENS_CAP
     else:
         trunc_cap = None
-    if skip_truncation_check or max_tokens_override is not None:
+    if skip_truncation_check:
         truncation_detected = None
-        if max_tokens_override is not None and not skip_truncation_check:
-            print("[CHECK] 显式指定 max_tokens，跳过会改写上限的截断探测")
-        else:
-            print("[CHECK] 跳过截断探测（由命令行显式指定）")
+        print("[CHECK] 跳过截断探测（由命令行显式指定）")
     else:
         truncation_detected, max_tokens = check_truncation(
             api_base, api_key, model_name, max_tokens, max_model_len,
@@ -1131,13 +1077,24 @@ def run_fast_gpqa(
     # Step 4: 构建 generation_config（优先采用模型自带 generation_config.json 的采样参数，
     # 读取失败/缺失时无声回退现有默认；纯增强层，绝不新增评测报错点）
     gen_config = resolve_gen_params(is_thinking, max_tokens, model_path=model_name)
+    _model_key = str(model_name).split('/')[-1]
+    _GEN_OVERRIDES = {
+        'MiniCPM4-8B': {'temperature': 0.8, 'top_p': 0.8},
+        'MiniCPM4.1-8B': {'temperature': 0.8, 'top_p': 0.8},
+        'DeepSeek-R1-Distill-Qwen-32B-Japanese': {'temperature': 0.6, 'top_p': 0.95, 'max_tokens': 16384},
+        'Light-R1-7B-DS': {'temperature': 0.6, 'top_p': 0.95, 'max_tokens': 20000},
+    }
+    if _model_key in _GEN_OVERRIDES:
+        for _k, _v in _GEN_OVERRIDES[_model_key].items():
+            if _k == 'max_tokens':
+                max_tokens = int(_v)
+            gen_config[_k] = _v
+        print(f"  [gen] applied embedded model config for {_model_key}: temperature={gen_config.get('temperature')}, top_p={gen_config.get('top_p')}, max_tokens={gen_config.get('max_tokens')}")
 
     # Step 5: 构建 dataset_args（few-shot 按数据集配置；thinking 模型加 remove_until 过滤）
     dataset_args = {dataset: {'few_shot_num': cfg['few_shot_num']}}
     if is_thinking:
         dataset_args[dataset]['filters'] = {'remove_until': '</think>'}
-    if 'magistral' in model_name.lower():
-        dataset_args[dataset]['system_prompt'] = MAGISTRAL_SYSTEM_PROMPT
 
     evalscope_config = {
         'dataset_hub': dataset_hub,
@@ -1232,11 +1189,6 @@ def run_fast_gpqa(
 
     # Step 8: 解析结果
     score, raw_details = parse_result(result)
-    if score is None:
-        # evalscope 1.11.1 run_task 有时返回空对象；从 work_dir 报告 JSON 兜底
-        score = _read_score_from_workdir(work_dir, model_id, dataset)
-        if score is not None:
-            print(f"[PARSE] run_task 返回值解析失败，从 {work_dir}/reports/ 兜底读取分数: {score}%")
     # 以 evalscope 报告的实际评测数为准（mmlu per-subset 时为 57×limit 而非 limit）
     for _k in ('metrics', 'metric'):
         for _m in (raw_details.get(_k) or []) if isinstance(raw_details, dict) else []:
@@ -1290,8 +1242,7 @@ def run_fast_gpqa(
         'max_tokens': max_tokens,
         'max_model_len': max_model_len,
         'truncation_detected': truncation_detected,
-        'truncation_check_skipped': skip_truncation_check or max_tokens_override is not None,
-        'max_tokens_overridden': max_tokens_override is not None,
+        'truncation_check_skipped': skip_truncation_check,
         'temperature': gen_config['temperature'],
         'probe_time_seconds': probe_time,
         'eval_duration_seconds': round(total_elapsed - probe_time, 2),
@@ -1317,7 +1268,6 @@ def run_fast_gpqa(
             'max_model_len': '模型支持的最大上下文长度',
             'truncation_detected': '是否检测到输出被截断（true 时分数可能偏低）',
             'truncation_check_skipped': '是否由命令行显式跳过截断探测',
-            'max_tokens_overridden': '是否由命令行显式指定 max_tokens',
             'temperature': '采样温度（0.0=贪心解码）',
             'probe_time_seconds': '并发探测阶段耗时（秒）',
             'eval_duration_seconds': '实际评测阶段耗时（秒）',
@@ -1401,8 +1351,6 @@ def main():
                         help='固定评测并发数，指定后跳过自动并发探测（用于受控 A/B）')
     parser.add_argument('--skip-truncation-check', action='store_true',
                         help='跳过评测前单题截断探测（已知慢速 thinking 模型重试时使用）')
-    parser.add_argument('--max-tokens', type=int, default=None,
-                        help='显式指定单次生成最大 token 数；指定后跳过会改写该上限的截断探测')
     parser.add_argument('--output', type=str, default=None,
                         help='结果 JSON 输出路径（如 /flagos-workspace/results/gpqa_native.json）')
     args = parser.parse_args()
@@ -1514,7 +1462,6 @@ def main():
                 output_path=output_path,
                 eval_batch_size=args.eval_batch_size,
                 skip_truncation_check=args.skip_truncation_check,
-                max_tokens_override=args.max_tokens,
             )
             reports.append((dataset, report))
 
@@ -1547,3 +1494,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+```

@@ -284,6 +284,8 @@ NV 对比：
 /models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py
 ```
 
+仓库留存修复版的完整脚本已嵌入 [file_fixes/Nanbeige4.1-3B.md](file_fixes/Nanbeige4.1-3B.md)。代码块可完整保存为 `fast_gpqa.py`；由于当前堡垒机未能定位 T-Head 资产，尚未证明它与远端运行文件逐字节一致，复现时应先与远端 `.bak` 做 diff。
+
 修改函数：
 
 ```text
@@ -300,6 +302,24 @@ _extract_explicit_mcq_answer
 ```text
 /models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py.bak_20260918_nanbeige_extract
 ```
+
+仓库中留存的修复版实现见 [fast_gpqa.py](fast_gpqa.py) 的 `_extract_explicit_mcq_answer`。复现时替换该函数的具体逻辑如下（此为仓库版本；远端原脚本与 `.bak` 尚未完成字节级比对）：
+
+```python
+def _extract_explicit_mcq_answer(text: str) -> Optional[str]:
+    normalized = (text or "").replace("*", "").replace("_", "")
+    patterns = (
+        r"(?im)^\s*[-+>]?\s*(?:final\s+)?answer\s*:\s*(?:is\s+)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+        r"(?im)^\s*[-+>]?\s*(?:the\s+)?(?:correct\s+)?answer\s+is\s+(?:option\s*)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+        r"(?im)^\s*(?:therefore|thus|so|hence|conclusion)[:,]?\s*(?:the\s+)?(?:final\s+)?answer\s+(?:should\s+be|is)\s+(?:option\s*)?[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+        r"(?im)^\s*(?:therefore|thus|so|hence|conclusion)[:,]?\s*(?:answer|option)\s+[\(\[]?\s*([A-D])(?=\s*[\)\]\.,:;-]|\s|$)",
+    )
+    matches = [(m.start(), m.group(1))
+               for pattern in patterns for m in re.finditer(pattern, normalized)]
+    return sorted(matches)[-1][1].upper() if matches else None
+```
+
+关键约束：`^` 与 `re.MULTILINE` 只匹配行首结论，`[A-D]` 限定四选一，后视断言阻止从单词开头误取字母；有多条明确结论时按文本位置选最后一条。无匹配时返回 `None`，由 `analyze_mcq_answer_extraction` 仅在 EvalScope 结果本身是 A/B/C/D 时回退，不能从正文随意猜测。注意这改变的是判分后处理，不会自动使模型生成更短的答案；仍需保留 `finish_reason` 和长输出审计。
 
 修复后使用 `flagrelease_thead_eval_20260915` 中的 `evalscope 1.5.1` 环境，对同一服务重新真实生成 50 题预测，再执行后处理和 NV 对比。
 

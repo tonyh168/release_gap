@@ -184,6 +184,8 @@ max_model_len: 32768
 /models/day0_eval/fast_gpqa_genconfig_fixed.py
 ```
 
+从远端评测容器只读导出的完整脚本已嵌入 [file_fixes/MiniCPM4-8B.md](file_fixes/MiniCPM4-8B.md)。它与 DeepSeek 记录保存的是同一个专用脚本快照，但以模型名分别留档，便于单模型复现和自动化取用。
+
 该脚本以统一评测脚本为基础：
 
 ```text
@@ -205,6 +207,10 @@ if _model_key in _GEN_OVERRIDES:
     for _k, _v in _GEN_OVERRIDES[_model_key].items():
         gen_config[_k] = _v
 ```
+
+远端 `day0-eval-standard` 的只读 `diff -u` 核验表明：实际专用脚本在 `gen_config = resolve_gen_params(...)` 之后、构建 `dataset_args` 之前插入 13 行。上面是本模型的简化片段；完整映射还包括 `MiniCPM4.1-8B`（0.8/0.8）、`DeepSeek-R1-Distill-Qwen-32B-Japanese`（0.6/0.95/16384）和 `Light-R1-7B-DS`（0.6/0.95/20000）。代码先以 `str(model_name).split('/')[-1]` 取模型名，遇到 `max_tokens` 时同时执行 `max_tokens = int(_v)`，然后写入 `gen_config[_k]`，最后打印全部生效参数。MiniCPM4-8B 只覆盖温度与 top_p，不覆盖 `max_tokens`，因此仍由原脚本按服务端 32768 上下文推得 24576；这不是模型 `generation_config.json` 自动读取到的值。
+
+专用脚本与原脚本除上述插入块外没有其他差异。复现时须从 `/models/day0_eval/fast_gpqa.py` 复制成专用脚本并在上述位置插入该映射，不要误改模型权重或推理服务。
 
 评测日志确认最终生效参数：
 
