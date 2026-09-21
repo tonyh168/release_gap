@@ -2,12 +2,12 @@
 
 - **失败报告**：flagrelease_fail_reports/Mthreads/FAILED_Mthreads_Phi-4-reasoning-plus_202608011354.md
 - **原始失败类型**：容器准备未完成（流程会话中断）→ **从未真正评测过**
-- **日期**：2026-09-20
-- **本次阶段**：✅ **服务已起、冒烟通过**（尚未跑精度评测）
+- **日期**：2026-09-20（2026-09-21 补记评测结果与实测算子列表）
+- **本次阶段**：✅ **已达标** —— 50 题筛查 **58.0%** vs NV 基线 46，`accuracy_compare` **退出码 0**
 
 ---
 
-## 最终结论（阶段一：服务可用性）
+## 最终结论
 
 | 项目 | 值 |
 |------|---|
@@ -15,7 +15,8 @@
 | 起服务耗时 | 14:06:00 → 14:07:03，**约 63 秒** |
 | 冒烟（短 prompt） | ✅ HTTP 200 |
 | 冒烟（长 prompt，14.9KB ≈ 6k token） | ✅ HTTP 200，**9.55s** |
-| 精度评测 | ⬜ 未做（评测镜像/脚本尚未就位） |
+| **精度评测（50 题筛查）** | ✅ **58.0%（29/50）** vs NV 46 → 相对退化 **−26.09%**，退出码 0 |
+| 定稿（198 题全量） | ⬜ 待跑（50 题只作筛查，判定以全量为准） |
 
 **核心结论**：SOP 第 1/2/3 节的命令（特权容器 + `/datapool` 挂载 + `/usr/local/bin/vllm` +
 收窄白名单 + `--enforce-eager`）在摩尔 MTT S5000 上**首次执行即成功**，无需额外调试。
@@ -79,14 +80,14 @@ INFO 09-20 14:07:03 Application startup complete.
 | 采样参数 | temp=0.8 / top_p=0.95 / top_k=50（模型自带） | `generation_config.json` |
 | `max_model_len` | 32768（模型默认） | config |
 | `max_tokens` | 自动 24576 → thinking 上限 20000 | `auto_max_tokens()` |
-| 执行模式 | **graph（评测前去掉 `--enforce-eager` 重启）** | metax 实测 eager 慢 10 倍 |
-| 算子策略 | 白名单 `silu_and_mul,rms_norm,rotary_embedding` | 对齐 t-head/phi-4 最优最小白名单 |
+| 执行模式 | ⚠️ **`--enforce-eager`（保留，不能去掉）** | **本机实测 graph 模式不可用**：去掉后 4 个模型全部启动失败（`MUSA driver error: operation not permitted when stream is capturing`）。<br>metax「graph 快 10 倍」在摩尔**不适用**，见 [[KNOWLEDGE]] 六 |
+| 算子策略 | 白名单 `silu_and_mul,rms_norm,rotary_embedding`（**实测算子列表见下文专节**） | 对齐 t-head/phi-4 最优最小白名单 |
 | NV 基线 | 46 → 达标下限 **43.7** | `nv_baseline.yaml` |
 | ⚠️ **首个 A/B** | `rms_norm,silu_and_mul` 留在白名单 vs **移出**（关掉其 FlagGems 替换） | ⚠️ **metax 与 t-head 结论相反**：<br>metax/Phi-4-mini（同 GQA）实测这两个算子是退化根因（加黑名单 26%→44% 达标）；<br>t-head/phi-4（同架构）却把它们留在白名单拿到最好成绩。**必须在摩尔上实测** |
 
 > 本模型**无同名厂商成功案例**，是 4 个里唯一没有可直接照抄配置的，见 [[EVAL_SETTINGS]] 2.1。
 
-## ⚠ 评测阶段的两个预警（尚未处理，跑评测前必看）
+## ⚠ 评测阶段的两个预警（✅ 2026-09-20 评测时已按预警逐条处置）
 
 1. **本模型不会被自动识别为 thinking 模型**。`fast_gpqa.py` 的 `THINKING_PATTERNS`（`qwen3`/`qwq`/`deepseek-r1`/`light-r1`/`minicpm4.1`/`mimo`/`hunyuan`）
    **不含 `phi-4-reasoning` 或 `reasoning-plus`**，而 Phi-4-reasoning-plus 是实打实的 reasoning 模型
@@ -109,9 +110,92 @@ INFO 09-20 14:07:03 Application startup complete.
    > 摩尔容器目前没挂 `/flagos-workspace`——补这个文件时要挂在 `<eval容器>:/flagos-workspace`，
    > 或在评测容器里建同路径目录。
 
+## 精度评测结果（gpqa_diamond 50 题筛查，2026-09-20）
+
+| 项目 | 值 |
+|------|----|
+| 得分 | **58.0%（29/50）** |
+| NV 基线 / 达标下限 | 46 / 43.7（容差 5%） |
+| 相对退化 | **−26.09%**（高于基线 12.0pt） |
+| 判定 | ✅ `accuracy_compare` **退出码 0**，`aligned: true`，`noise_zone: false` |
+| 模式 / 采样 | `thinking` / temp **0.8**、top_p **0.95**、top_k **50** |
+| `max_tokens` / `max_model_len` | 20000 / 32768 |
+| 截断 / runaway | `truncation_detected: false` / `runaway_count: 0`（50/50 全检） |
+| 并发 / 耗时 | `eval_batch_size: 16` / 评测段 **11448s（约 3.2h）** |
+| 产物 | `gpqa_50.json`、`verdict_50.json`、`eval_50.log`（`release_run_logs/Phi-4-reasoning-plus/`） |
+| evalscope 报告 | `outputs/gpqa_diamond/20260920_090428/reports/Phi-4-reasoning-plus/gpqa_diamond.json` |
+
+**采样参数确认生效**（两道预警的验证点，实际日志）：
+
+```
+[gen] 采用模型 generation_config.json 采样参数: {'temperature': 0.8, 'top_p': 0.95, 'top_k': 50}
+```
+
+→ 两个预警均已落地：`context.yaml` 写了 `thinking_model: true`，采样参数**没有被退回贪心**。
+
+判定 JSON（`verdict_50.json`）：
+
+```json
+{"baseline_mode": "nv_reference", "model": "Phi-4-reasoning-plus", "metric": "gpqa_diamond",
+ "nv": {"score": 46.0, "source": "NV 实测"}, "current": {"score": 58.0, "mode": "thinking"},
+ "tolerance": 0.05, "missing_nv": false, "rel_drop": -0.2609, "abs_diff": 12.0,
+ "aligned": true, "noise_zone": false,
+ "message": "精度达标: 当前=58.00%, NV=46.00%, 相对退化=-26.09% (容差 5.0%)"}
+```
+
+> 逐题对错：答对 29 题（index 0,1,2,4,5,6,9,10,11,13,14,16,19,20,25,26,27,34,35,38,39,40,41,42,43,44,46,47,49）；
+> 答错 21 题（3,7,8,12,15,17,18,21,22,23,24,28,29,30,31,32,33,36,37,45,48）。
+> 逐题原文与判分见 evalscope 的 `reviews/Phi-4-reasoning-plus/gpqa_diamond_default.jsonl`。
+
+## 开启算子列表（实测，2026-09-21 取自容器 `/tmp/flaggems_enable_oplist.txt`）
+
+> **文件名注意**：是 **`flaggems_enable_oplist.txt`**（`oplist` 连写，**不是** `op_list`），在**服务容器**的 `/tmp/` 下。
+> 它不是配置文件，而是 plugin-FL 在**算子首次被 dispatch 时**打出的 DEBUG 记录——逐行记「哪个 dispatch op 落到哪个后端」
+> 以及其下 flag_gems 的具体实现函数。所以它反映的是**实际触达**的算子，比白名单本身更有信息量。
+
+启动时设置的白名单：`VLLM_FL_FLAGOS_WHITELIST=silu_and_mul,rms_norm,rotary_embedding`
+
+| dispatch op | 落到哪个后端 | 下层实现（`flag_gems`） | 实测是否触达 |
+|-------------|--------------|------------------------|:------------:|
+| `rms_norm` | `default.flagos` | `gems_rms_forward` → `rms_norm_forward`；另有 **`fused_add_rms_norm`**（`[8192, 5120]` 形状实测） | ✅ |
+| `rotary_embedding` | `default.flagos` | `gems_rope_forward` → `apply_rotary_pos_emb` | ✅ |
+| `silu_and_mul` | `default.flagos` | `gems_silu_and_mul` → `silu_and_mul.forward` | ✅ |
+| `attention_backend` | `vendor.musa` | ——（厂商后端，**不是** FlagGems） | ✅ |
+
+**→ 开启算子列表：`["rms_norm", "rotary_embedding", "silu_and_mul"]`**（白名单 3 个全部真实触达，一个不多一个不少）
+
+原始文件全文（11 行 / 966 B / md5 `4e35deedbe0c7457f731382b95547e9c`）：
+
+```
+[DEBUG] vllm_fl.dispatch.ops.rms_norm: default.flagos
+[DEBUG] flag_gems.modules.normalization.gems_rms_forward: GEMS CUSTOM RMS_NORM
+[DEBUG] flag_gems.ops.rms_norm.rms_norm_forward: GEMS RMS_NORM FORWARD
+[DEBUG] vllm_fl.dispatch.ops.rotary_embedding: default.flagos
+[DEBUG] flag_gems.modules.rotary_embedding.gems_rope_forward: GEMS CUSTOM ROPE FORWARD
+[DEBUG] flag_gems.fused.rotary_embedding.apply_rotary_pos_emb: GEMS ROTARY_POS_EMBEDDING
+[DEBUG] flag_gems.modules.normalization.gems_rms_forward: GEMS CUSTOM FUSED_ADD_RMS_NORM
+[DEBUG] flag_gems.fused.fused_add_rms_norm.fused_add_rms_norm: GEMS FUSED_ADD_RMS_NORM FORWARD, [input shape]: torch.Size([8192, 5120]), [residual shape]: torch.Size([8192, 5120]), [weight shape]: torch.Size([5120])
+[DEBUG] vllm_fl.dispatch.ops.silu_and_mul: default.flagos
+[DEBUG] flag_gems.modules.activation.gems_silu_and_mul: GEMS CUSTOM SILU_AND_MUL FORWARD
+[DEBUG] flag_gems.fused.silu_and_mul.forward: GEMS SILU AND MUL FORWARD
+```
+
+> 与服务日志交叉验证一致：`grep -oE "Op .[a-z_]+. using .[a-z._]+." serve.log` 同样得到
+> `rms_norm` / `rotary_embedding` / `silu_and_mul` → `default.flagos`，外加 `attention_backend` → `vendor.musa`。
+>
+> ⚠️ 与 `serve.log` 里那条 `IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])` **不矛盾**：
+> 该行是 vLLM 自己的 IR 融合优先级打印，**4 个模型全都一样**，与 plugin-FL 的 dispatch 是两套机制。
+
 ## 提炼到 KNOWLEDGE 的条目
 
 1. 摩尔 `VLLM_FL_FLAGOS_WHITELIST` 会触发 vLLM 的 "Unknown environment variable" 告警，但**实际生效**——别被误导。
 2. 摩尔起服务时 `Cannot re-initialize MUSA in forked subprocess` traceback 出现在用量上报路径，**非致命**，日志分析别按 Traceback 判死。
 3. `VLLM_WORKER_MULTIPROC_METHOD=spawn` **不能**消除上述 fork 报错（触发点不是 worker）；要消噪声用 `VLLM_NO_USAGE_STATS=1`。
 4. **`THINKING_PATTERNS` 覆盖不全**：`Phi-4-reasoning-plus`、`Magistral` 这类名字里没有已知关键词的 reasoning 模型不会被自动识别，必须靠 `context.yaml` 标记。
+5. **容器 `/tmp/flaggems_enable_oplist.txt`（注意 `oplist` 连写）是「实际触达算子」的探针**，比白名单本身更有信息量——
+   逐行记 `vllm_fl.dispatch.ops.<op>: <后端>` + 下层 `flag_gems` 实现函数。**报告里的「开启算子列表」应从它取，而不是照抄白名单**：
+   两者可能不一致（见 Qwen3.5 日志：白名单 3 个、实际只触达 1 个）。
+6. **同一个白名单下，不同架构触达的算子数不同**：Phi-4（dense GQA）3 个全触达；
+   `attention_backend` 恒为 `vendor.musa`（厂商后端），**不属于 FlagGems 算子，不要写进算子列表**。
+7. 顺手存证：`serve.log` 里 `IrOpPriorityConfig(rms_norm=['native'], …)` 是 vLLM 自己的 IR 融合优先级，
+   **4 个模型全一样**，与 plugin-FL dispatch 是两套机制，别把它当成「算子没走 FlagGems」的证据。

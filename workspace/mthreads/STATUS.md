@@ -1,7 +1,9 @@
 # Mthreads 模型修复状态总览
 
-> 更新：2026-09-20 17:05
-> ⚡ **当前有 4 个 50 题评测在 `mthreads-25` 后台运行中** —— 接续工作请先看 [[PROGRESS]]
+> 更新：2026-09-21
+> ✅ **50 题筛查已跑完**（4 个模型，2026-09-20 17:21–20:08 跑分，2026-09-21 出判定）——
+> **3 个达标 / 1 个不达标**，明细见下「📊 50 题筛查结果」
+> ⚠️ 4 个模型的服务与 eval 容器**仍在 `mthreads-25` 上运行**；下一步是 **198 题全量定稿**
 >
 > 机型：MTT S5000 × 8（单卡 80GB） | 宿主机：`mthreads-25` / `mthreads-27`（`mthreads-26` 当前不可用）
 > 镜像：`harbor.baai.ac.cn/flagrelease-public/flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
@@ -22,7 +24,52 @@
 | 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/{eval_scripts,evalscope-datasets}` |
 | **4 个一对一 eval 容器 + context.yaml** | ✅ **已建好并验收**（详见 [[EVAL_INFRA]]） |
 | **评测参数定稿** | ✅ 见 [[EVAL_SETTINGS]]（温度/top_p/top_k/is-think 总表） |
-| 正式跑分 | ⬜ **可开跑** —— 环境侧已无阻塞 |
+| **50 题筛查跑分** | ✅ **已完成** —— 3 达标 / 1 不达标，见下「📊 50 题筛查结果」 |
+| 198 题全量定稿 | ⬜ **下一步** —— 环境与服务均已就绪，直接改 `--limit 0` 重跑 |
+
+## 📊 50 题筛查结果（2026-09-20 跑完，2026-09-21 出判定）
+
+> 逐模型的完整信息在 `reports/<模型名>.md`（含发布字段），过程记录在 `fixes/<模型名>.md`。
+> 判定命令：`accuracy_compare.py --v2 gpqa_50.json --nv-baseline <模型名> --metric gpqa_diamond`，
+> 产物 `verdict_50.json` 与 `gpqa_50.json` 同目录（`/datapool/flagrelease/release_run_logs/<模型名>/`）。
+
+| 模型 | 得分 | NV 基线 | 相对退化 | 判定 | runaway | 截断 | 报告 |
+|------|:----:|:-------:|:--------:|:----:|:-------:|:----:|------|
+| **Phi-4-reasoning-plus** | **58.0%**（29/50） | 46 | **−26.09%** | ✅ 退出码 0 | 0 | 无 | [[reports/Phi-4-reasoning-plus]] |
+| **LFM2.5-1.2B-Thinking** | **32.0%**（16/50） | 29.0 | **−10.34%** | ✅ 退出码 0 | 0 | 无 | [[reports/LFM2.5-1.2B-Thinking]] |
+| **Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled** | **78.0%**（39/50） | 75 | **−4.00%** | ✅ 退出码 0 | 1（idx 7） | 无 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
+| reka-flash-3 | 50.0%（25/50） | 59 / **53.54**※ | +15.25% / **−6.61%** | ❌ 退出码 1 | 0 | 无 | —（不达标，见 [[fixes/reka-flash-3]]） |
+
+> ※ **reka-flash-3 的基准按 metax 裁定改用 NV 原生实测 53.54**（表内 59 出自 NV 失败报告、口径不符）。
+> 换成 53.54 后相对退化为 −6.61%，**仍超 5% 容差**——**两种基准都不达标**，且这是**前 50 题偏易**的口径
+> （metax 自己 v6 前 50 题 56.00% → 全量仅 54.04%），全量大概率更低。
+
+**三项必查（全部通过）**：
+
+| 检查项 | 结果 |
+|--------|------|
+| `[gen]` 采样参数是否生效 | ✅ 4 个模型全部确认：Phi-4 用模型 gc（0.8/0.95/50）、reka 用模型 gc（0.6/0.95/1024）；LFM2.5 与 Qwen3.5 本就无采样字段 → 走 thinking 默认（0.6/0.95）。**无一退回贪心** |
+| `truncation_detected` | ✅ 4 个模型**全为 false** |
+| `serve.log` 侧异常 | ✅ 无致命错误（日志里的 Traceback 是 `_report_usage_worker` 读不到设备属性，属已知噪声） |
+
+**逐模型要点**：
+
+- **Phi-4-reasoning-plus** —— 原失败类型是**流程中断**（从未评测过），本轮**首跑即达标**且高出基线 12pt。
+  未做 metax 建议的 `rms_norm,silu_and_mul` 白名单 A/B（留着就已达标）。
+- **LFM2.5-1.2B-Thinking** —— 与 **iluvatar 逐位一致**（同为 32.0% vs 29.0、退出码 0），跨平台可复现。
+- **Qwen3.5-27B-Distilled** —— **摩尔的机会兑现了**：iluvatar 受 8192 上下文限制只拿到 70.0%（不达标），
+  摩尔给到 32768 → **78.0% 达标**，反超基线 3pt。同模型同配置，**8pt 差距全部来自上下文长度**。
+- **reka-flash-3** —— 唯一不达标。与 metax v6 **同题对照**：共同答对 21 题，metax 独对 7 题（13/22/23/26/28/35/43）、
+  摩尔独对 4 题（17/36/45/46），净差 3 题。采样参数已确认生效（metax 的根因在摩尔侧**已排除**），
+  7:4 的不对称在 temp=0.6 的采样抖动下**还不足以定论真凶**，需全量 198 题才能判死。
+
+**⚠️ 一个待解释的观察（不影响达标）**：Qwen3.5 **实际只触达 `silu_and_mul` 一个 FlagGems 算子**，
+白名单里另外两个（`rms_norm`、`rotary_embedding`）**根本没走 plugin-FL 的 dispatch**
+（`serve.log` 无对应 `using` 行 + 容器 `/tmp/flaggems_enable_oplist.txt` 只有 3 行，另三个模型是 11 行）。
+即**该模型算子替换的覆盖面比白名单窄**，将来若靠增删算子调精度，改这两项是无效操作。
+
+> **「开启算子列表」一律以容器 `/tmp/flaggems_enable_oplist.txt` 的实测为准**（注意文件名是 `oplist` 连写），
+> **不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。逐模型实测名单见 `fixes/*.md` 与 `reports/*.md`。
 
 ## 图例
 
@@ -34,6 +81,9 @@
 | ✅ 已通过 | `accuracy_compare` 退出码 0 |
 | ❌ 精度不达标 | `accuracy_compare` 退出码 1 |
 | ⏭️ 跳过 | 非模型问题（镜像/流程缺陷），暂时搁置 |
+
+> **口径提醒**：下表「✅ 已达标」目前一律是 **50 题筛查**口径（`--limit 50`）；
+> **定稿判定一律以 198 题全量为准**（metax/reka-flash-3 教训：前 50 题偏易、不可外推）。
 
 ## 分类统计
 
@@ -60,7 +110,7 @@
 | AceReason-Nemotron-7B | mmlu 70.72 / math_500 95.2 | 📋 待开始 | 会话在服务启动前因 API 流式卡顿中断 |
 | Hermes-2-Pro-Llama-3-8B | gpqa_diamond 33 | 📋 待开始 | 权重下载命令超时 |
 | Ministral-3-14B-Instruct-2512 | gpqa_diamond 56 | 📋 待开始 | 容器准备未完成 |
-| Phi-4-reasoning-plus | gpqa_diamond 46 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU0/:8000，63s 起服务，短+长 prompt 冒烟均 200）；待评测。⚠ 评测前须补 `context.yaml`（thinking 模型 + 采样参数，见修复日志） |
+| Phi-4-reasoning-plus | gpqa_diamond 46 | ✅ 已达标 | **50 题筛查 58.0%（29/50），相对退化 −26.09%，退出码 0**。服务首跑即通（TP=1/GPU0/:8000，63s）。⚠ 198 题全量待跑；metax 建议的算子 A/B 未做（留白名单就已达标）。报告：[[reports/Phi-4-reasoning-plus]] |
 | Qwen2.5-7B-Instruct | gpqa_diamond 39.0 | 📋 待开始 | 会话连接中断 |
 | Qwen2.5-Coder-7B-Instruct | gpqa_diamond 27 | 📋 待开始 | 会话连接中断 |
 | aya-23-8B | gpqa_diamond 27 | 📋 待开始 | 容器准备未完成 |
@@ -86,11 +136,11 @@
 | DASD-4B-Thinking | gpqa_diamond 44.0 | 📋 待开始 | |
 | Dhanishtha-2.0-preview | mmlu 81.09 / math_500 68.6 | 📋 待开始 | |
 | GLM-4.7-Flash | gpqa_diamond 55 | 📋 待开始 | |
-| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU1/:8001，35s 起服务，短+长 prompt 均 200）；混合 SSM 架构无需特殊 attention-backend。⚠ 评测前须补 `context.yaml`（thinking 标记） |
+| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | ✅ 已达标 | **50 题筛查 32.0%（16/50），相对退化 −10.34%，退出码 0** —— 与 **iluvatar 逐位一致**（同 32.0% vs 29.0）。服务首跑即通（35s），混合 SSM 无需特殊 attention-backend。⚠ 198 题全量待跑。报告：[[reports/LFM2.5-1.2B-Thinking]] |
 | Light-R1-14B-DS | mmlu 85.17 / math_500 93.2 | 📋 待开始 | |
 | Qwen3-4B-SafeRL | mmlu 81.39 / math_500 94.8 | 📋 待开始 | 另有 `float4_e2m1fn_x2` 崩溃记录 |
 | ZR1-1.5B | mmlu 50.54 / math_500 89.4 | 📋 待开始 | |
-| reka-flash-3 | gpqa_diamond 59 | 🟢 服务运行中 | **SOP 首跑即通**（TP=1/GPU2/:8002，45s 起服务，短+长 prompt 均 200）。⚠ 评测前须补 `context.yaml`——metax 侧已查明其低分真凶是采样参数被忽略（`do_sample=true,temp=0.6`），摩尔可直接复用该结论验证 |
+| reka-flash-3 | gpqa_diamond 59（**裁定改用 53.54**） | ❌ 不达标 | **50 题筛查 50.0%（25/50）**：对表内 59 退化 **+15.25%**、对 NV 原生 53.54 退化 **−6.61%** —— **两种基准都超 5% 容差**（退出码 1）。采样参数**已确认生效**（`[gen]` 采用模型 gc 0.6/0.95/1024），metax 那条根因在摩尔侧**已排除**。与 metax v6 同题对照：共同答对 21，metax 独对 7 / 摩尔独对 4（净差 3 题），在 temp=0.6 抖动下不足以定论 → **需 198 题全量定性**。见 [[fixes/reka-flash-3]] |
 | rnj-1-instruct | gpqa_diamond 37 | 📋 待开始 | |
 
 ## 🌀 生成失控 / ⏳ 超评测预算（2）
@@ -122,7 +172,7 @@
 | DeepSeek-R1-Distill-Qwen-32B | gpqa_diamond 37 | 📋 待开始 | |
 | Phi-3-vision-128k-instruct | gpqa_diamond 25.0 | 📋 待开始 | 多模态 VLM，需图像输入支持 |
 | Qwen3-30B-A3B-Instruct-2507 | gpqa_diamond 62 | 📋 待开始 | |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | 🟢 服务运行中 | **已起**（TP=1/GPU3/:8003，2m40s 起服务，短+长 prompt 均 200）。⚠ **必须显式 `--max-model-len 32768`**——模型默认 256K，KV 需 64GB 装不下（256KB/token）。多模态架构（含视觉塔 + MTP 权重），文本路径已验证，图像未验证 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | ✅ 已达标 | **50 题筛查 78.0%（39/50），相对退化 −4.00%，退出码 0**（1 个 runaway，idx 7）。**关键：显式 `--max-model-len 32768`**（模型默认 256K，KV 需 64GB 装不下）。**iluvatar 同模型受 8192 上下文限制只拿 70.0% 不达标，摩尔 4 倍上下文直接翻盘（+8pt）**。⚠ 多模态只测了文本路径；198 题全量待跑。报告：[[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
 | Qwen3.5-27B-Derestricted | mmlu 89.98 / math_500 84.8 | 📋 待开始 | |
 | Turkish-Gemma-9b-v0.1 | mmlu 75.19 / math_500 53.6 | 📋 待开始 | 服务启动未通过 |
 | gemma-2-27b-it | gpqa_diamond 48 | 📋 待开始 | |
@@ -142,27 +192,32 @@
 
 ## 当前进度快照
 
-> 更新：2026-09-20 14:45
+> 更新：2026-09-21
 
-- **精度已通过**：0 / 50（3 个模型在流水线侧已达标，待复核确认后计入）
-- **精度不达标**：0 / 50
-- **服务已起/冒烟通过**：**4 / 50** —— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
-  `reka-flash-3` / `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled`，**全部一次通过**
-- **评测进行中**：**4 / 50**（50 题筛查，2026-09-20 17:00 起跑，见 [[PROGRESS]]）
+- **精度已通过**：**3 / 50**（50 题筛查口径）—— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
+  `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled`
+- **精度不达标**：**1 / 50** —— `reka-flash-3`（50.0%，两种基准都超容差）
+- **服务已起/冒烟通过**：**4 / 50**，全部一次通过
+- **50 题筛查已完成**：**4 / 4**（原计划的四个模型全部出分）
+- **198 题全量定稿**：**0 / 4**（⬅ 下一步）
 - **待开始**：42 / 50
 
-### 当前 GPU 占用（mthreads-25，2026-09-20 15:30）
+### 当前 GPU 占用（mthreads-25，2026-09-21 复查）
 
-| 卡 | 服务 | 端口 | max_model_len |
-|----|------|:----:|:-------------:|
-| GPU0 | Phi-4-reasoning-plus | 8000 | 32768 |
-| GPU1 | LFM2.5-1.2B-Thinking | 8001 | 32768 |
-| GPU2 | reka-flash-3 | 8002 | **24576** |
-| GPU3 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | 32768 |
-| GPU4–7 | **空闲（4 张）** | — | — |
+| 卡 | 服务 | 端口 | max_model_len | 实测显存 |
+|----|------|:----:|:-------------:|:--------:|
+| GPU0 | Phi-4-reasoning-plus | 8000 | 32768 | 73799 MiB |
+| GPU1 | LFM2.5-1.2B-Thinking | 8001 | 32768 | 73868 MiB |
+| GPU2 | reka-flash-3 | 8002 | **24576** | 73744 MiB |
+| GPU3 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | 32768 | 73395 MiB |
+| GPU4–7 | **空闲（4 张，0 MiB）** | — | — | — |
 
-> 4 个服务均以 `--enforce-eager` 运行（**摩尔 graph 模式不可用**，见下方「评测前必须改的服务侧设置」），
+> 4 个服务均以 `--enforce-eager` 运行（**摩尔 graph 模式不可用**，见下「评测前必须改的服务侧设置」），
 > 首都测试全部通过（均正确答「北京」）。评测参数总表见 [[EVAL_SETTINGS]]。
+>
+> 💡 **容量参考（2026-09-21 实测）**：每服务 TP=1 独占 1 卡（`--gpu-memory-utilization 0.9` 实占 ~73.7GB/80GB）。
+> 当前 4 卡在跑 + 4 卡空闲。**若停掉其中 3 个服务，可再起 7 个同规格（TP=1）服务**——
+> 一台机最多 8 个「一模型一卡」的服务。想在同一张卡上多开，必须显式下调 `--gpu-memory-utilization`。
 
 ### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
 
@@ -170,12 +225,12 @@
 
 | 模型 | 大小 | 架构 | 状态 |
 |------|------|------|------|
-| Phi-4-reasoning-plus | 28 GB | `Phi3ForCausalLM`（dense GQA） | ✅ 已下 + 🟢 服务运行中 |
-| LFM2.5-1.2B-Thinking | 2.2 GB | `Lfm2ForCausalLM`（混合 SSM） | ✅ 已下 + 🟢 服务运行中 |
-| reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 + 🟢 服务运行中 |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（多模态+MTP，11 分片） | ✅ 已下 + 🟢 服务运行中 |
+| Phi-4-reasoning-plus | 28 GB | `Phi3ForCausalLM`（dense GQA） | ✅ 已下 → ✅ 50 题达标 |
+| LFM2.5-1.2B-Thinking | 2.2 GB | `Lfm2ForCausalLM`（混合 SSM） | ✅ 已下 → ✅ 50 题达标 |
+| reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 → ❌ 50 题不达标 |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（多模态+MTP，11 分片） | ✅ 已下 → ✅ 50 题达标 |
 
-### 评测阻塞项（四个服务都已就绪，卡在评测环境）
+### 评测环境（✅ 已全部就绪并跑通，不再是阻塞项）
 
 | 项 | 状态 |
 |----|------|
@@ -183,15 +238,17 @@
 | 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/eval_scripts/` 与 `evalscope-datasets/`（gpqa_diamond 亲测可用） |
 | **4 个一对一 eval 容器** | ✅ **已建好并验收**，各自的 `context.yaml` 全部生效（详见 [[EVAL_INFRA]]） |
 | **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（含「评测参数总表」温度/top_p/top_k/is-think） |
-| 正式跑分 | ⬜ **可以开跑了** —— 环境已就绪，等发起人确认 |
+| 跑分进度 | ✅ **50 题筛查已完成**（4/4 出分：3 达标 / 1 不达标）；⬜ **198 题全量待跑** |
 
 > **环境侧已无阻塞。** 评测入口与命令见 [[EVAL_INFRA]]，逐模型参数见 [[EVAL_SETTINGS]]。
+> **下一步只需把 `--limit 50` 去掉（`--limit 0` = 全量 198）重跑四个模型**，服务与 eval 容器都还在。
 
 ### ⚠ 评测前必须改的服务侧设置（来自厂商案例 + 本机实测）
 
-| # | 改动 | 影响 | 依据 |
-|---|------|------|------|
-| 1 | ⚠️ **不要改 graph** —— 摩尔必须用 `--enforce-eager` | 全部 | **本机实测：去掉 `--enforce-eager` 后 4 个模型全部启动失败**（`MUSA driver error: operation not permitted when stream is capturing`）。metax 的「graph 快 10 倍」在摩尔不适用 |
-| 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 ✅ **已改** |
-| 3 | reka-flash-3 判定基准改用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定 |
-| 4 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 | 3 个模型名不含关键词不会被自动识别为 thinking |
+| # | 改动 | 影响 | 依据 | 状态 |
+|---|------|------|------|:----:|
+| 1 | ⚠️ **不要改 graph** —— 摩尔必须用 `--enforce-eager` | 全部 | **本机实测：去掉 `--enforce-eager` 后 4 个模型全部启动失败**（`MUSA driver error: operation not permitted when stream is capturing`）。metax 的「graph 快 10 倍」在摩尔不适用 | ✅ 已执行 |
+| 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 | ✅ 已改 |
+| 3 | reka-flash-3 判定基准改用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定 | ✅ 已执行（**两种基准都不达标**） |
+| 4 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 | 3 个模型名不含关键词不会被自动识别为 thinking | ✅ 已执行，`[gen]` 行确认生效 |
+| 5 | **「开启算子列表」以容器 `/tmp/flaggems_enable_oplist.txt` 实测为准**（文件名 `oplist` 连写） | 全部 | **白名单 ≠ 实际触达**：Qwen3.5 白名单 3 个、实测只触达 1 个 | ✅ 4 个模型均已记录 |
