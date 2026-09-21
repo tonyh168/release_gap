@@ -391,10 +391,75 @@ blacklist `sort,sort_stable,mm,addmm,broadcast_to`，超时 **60 分钟**）
 
 ## 结果
 
-*(待评测完成后填写)*
+### ✅ 达标（2026-09-21 22:26，`verdict_gpqa_iter1.json`，exit=0）
+
+```json
+{
+  "metric": "gpqa_diamond",
+  "nv":      { "score": 56.0, "source": "NV 实测" },
+  "current": { "score": 56.0, "mode": "standard" },
+  "tolerance": 0.05,
+  "rel_drop_pct": 0.0,
+  "abs_diff": 0.0,
+  "aligned": true,
+  "noise_zone": false,
+  "message": "精度达标: 当前=56.00%, NV=56.00%, 相对退化=0.00% (容差 5.0%)"
+}
+```
+
+**GPQA Diamond 56.0% vs NV 基线 56.0%，相对退化 0.00%。50 题全量，一次干净达标。**
+
+| 项 | 值 |
+|----|----|
+| score | **56.0**（= 基线） |
+| total_questions | 50 |
+| **runaway** | **0 / 50**（`checked: 50, runaway_count: 0`） |
+| **truncation_detected** | **False** |
+| mode | `standard`（确认未套 thinking wrapper） |
+| temperature | 0.7（+ top_p 0.8 / top_k 20 / rp 1.05，模型自带 gen config） |
+| max_tokens | 24576 |
+| eval_batch_size | 8（自动探测） |
+| eval_duration | **579.25 s（9.7 分钟）** |
+| probe_time | 15.6 s |
+| total_duration | 594.9 s |
+| work_dir | `outputs/gpqa_diamond/20260921_141748` |
+
+**这是一次"干净达标"** —— 没有 runaway、没有截断，不像 MiroThinker 那种
+"runaway 70%、达标全靠能收尾的 16 题"的勉强情形。分数与基线**精确相等**（28/50），
+说明该模型在本镜像 + plugin-FL 下的精度**没有可观测退化**。
+
+### ⭐ 本轮最有价值的副产品（对后续 dense 模型）
+
+**72B dense 在 graph 模式下能顺利图捕获，且吞吐几乎不吃亏**：
+
+| 模型 | 单请求解码吞吐（graph） | 相对 |
+|------|:---:|:---:|
+| Fathom-R1-14B（14B dense） | 18.97 tok/s | 基准 |
+| **Qwen2.5-72B-Instruct（72B dense）** | **~18 tok/s** | **仅慢 ~7%** |
+
+启动耗时 **5 分 10 秒**（加载 37 分片 ~2min + `torch.compile` 37s + 图捕获 22s），
+KV cache 222,352 tokens。**说明「去掉 `--enforce-eager`」这条经验对更大的 dense 模型同样成立**，
+不是小模型专属。若回退 eager（按 5.4~8.7× 损失估）单请求约 2 tok/s，50 题要跑好几天 ——
+**"graph 优先"这个决定换来的不是几分钟，而是"当天出分"与"跑不完"的差别。**
 
 ---
 
 ## 提炼到 KNOWLEDGE 的条目
 
-*(待填写)*
+1. **无人值守 driver：失败会伪装成"还在进行中"**（已进 `_shared/KNOWLEDGE.md` 第七节 + 七之二节）。
+   本轮一次踩了 5 个，形状完全一致：重定向失败=静默不执行 / `pgrep` 自匹配=永远活着 /
+   僵尸进程=永远活着 / `docker exec` 缺 `-i`=静默无输出 / `_split_datasets` 缺 None 守卫=静默走错分支。
+   **对策：凡等待，都要校验一个能证伪的独立正向证据（进程在 + 日志非空 + 输出文件写出）。**
+
+2. **`docker exec` 里的路径必须是容器内路径**（宿主机路径会让重定向失败、整条命令静默不执行）。
+   判据：driver 自己 `tail` 报 `No such file or directory` 就是路径写错，不要继续等。
+
+3. **graph 模式对 72B dense 同样有效**：不因模型变大而失效；72B 与 14B 单请求吞吐仅差 7%。
+   **起服务前先确认是否真的需要 `--enforce-eager`。**
+
+4. **`fast_gpqa.py` 的 `generation_config.json` 采纳逻辑需要 `--model-dir` 才在流水线里生效**
+   （`--model-name` 传 NV key 时 `_resolve_model_dir()` 两条路径都不通 → 静默回退贪心）。
+   已新增该选项（纯增量）。**判据**：日志出现 `[gen] 采用模型 generation_config.json 采样参数:`。
+
+5. ⚠️ **SOP 第 4 节的评测命令模板没写 `--dataset`，照抄会踩**
+   `_split_datasets(None) → ['None'] → [ERROR] 未知数据集` 的坑（脚本已修，但命令模板建议一律显式写数据集名）。

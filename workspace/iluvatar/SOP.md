@@ -157,8 +157,15 @@ cd /workspace/release_评测标准
 
 model_name=<与起服务时相同的 NV key>
 # 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric
+# ⚠️ --dataset 一定要显式写：不写会踩 `_split_datasets(None) → ['None'] → 未知数据集` 的坑
+#    （脚本已补 None 守卫，但显式写更稳，且换指标时不会被默认值掩盖）
+# ⚠️ --model-dir 指向模型权重目录（容器内路径）：给了才会用模型自带 generation_config.json
+#    的采样参数；不给则按脚本默认（standard 贪心 / thinking 0.6，0.95）。
+#    判据：评测日志出现 `[gen] 采用模型 generation_config.json 采样参数: {...}` 才算生效。
 python3 fast_gpqa.py --model-name ${model_name} \
   --api-base http://127.0.0.1:8000/v1 \
+  --dataset gpqa_diamond \
+  --model-dir /models/flagrelease/fixes_models/${model_name} \
   --output /models/release_run_logs/${model_name}/gpqa.json
 python3 accuracy_compare.py \
   --v2 /models/release_run_logs/${model_name}/gpqa.json \
