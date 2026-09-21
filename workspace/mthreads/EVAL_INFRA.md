@@ -1,6 +1,6 @@
 # Mthreads 评测环境（eval 容器）说明
 
-> 更新：2026-09-20 | 宿主机：`mthreads-25` | 依据：本机实测
+> 更新：2026-09-21（追加 reka-flash-3 重复性实验的 3+3 个容器） | 宿主机：`mthreads-25` | 依据：本机实测
 > 配套：[[EVAL_SETTINGS]]（逐模型参数）、[[SOP]] 第 4 节、[[ENV]]（存储）
 
 ---
@@ -20,6 +20,25 @@
 | `eval-lfm2.5-1.2b-thinking` | LFM2.5-1.2B-Thinking | 8001 |
 | `eval-reka-flash-3` | reka-flash-3 | 8002 |
 | `eval-qwen3.5-27b-distilled` | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 |
+
+### 追加：reka-flash-3 重复性实验的 3 个容器（2026-09-21）
+
+为量出 temp=0.6 采样下的**抖动带**（起因与判定方法见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节），
+同一模型**再起了 3 个服务 + 3 个配套 eval 容器**，「一服务一 eval 容器」的 1:1 绑定不变：
+
+| eval 容器 | 对应服务容器 | GPU | 服务端口 |
+|-----------|--------------|:---:|:--------:|
+| `eval-reka-flash-3`（复用原容器） | `flagrelease-fix-reka-flash-3` | GPU2 | 8002 |
+| `eval-reka-flash-3-r2` | `flagrelease-fix-reka-flash-3-r2` | GPU0 | 8004 |
+| `eval-reka-flash-3-r3` | `flagrelease-fix-reka-flash-3-r3` | GPU1 | 8005 |
+| `eval-reka-flash-3-r4` | `flagrelease-fix-reka-flash-3-r4` | GPU3 | 8006 |
+
+> 4 个容器的 `context.yaml` **内容完全相同**（都指向 reka 权重、`thinking_model: true`），
+> 各自私有、不共享挂载 —— 这正是 1:1 绑定在「同模型多实例」场景下的用法。
+>
+> ⚠️ **`outputs/` 是共享的**：4 个 eval 容器都挂 `/datapool`，evalscope 的输出落在
+> **同一个** `/datapool/flagrelease/eval_scripts/outputs/gpqa_diamond/<时间戳>/` 下，
+> 靠**时间戳**区分（起跑刻意错开 6 秒）。本次时间戳对应关系记在 [[PROGRESS]]「已知会遇到的情况」。
 
 > ⚠️ **`context.yaml` 保持容器私有**：每个容器的 `/flagos-workspace/shared/` 是在容器内 `mkdir` 建的，
 > **没有从宿主机挂载**。如果哪天改成挂载共享目录，1:1 隔离就失效了。
@@ -44,6 +63,7 @@ EOF
 ```
 
 四个容器已建好，`context.yaml` 内容见下节。脚本 `make_eval_containers.sh` 存在宿主机 `/tmp/`。
+（2026-09-21 又按同一命令加了 `-r2`/`-r3`/`-r4` 三个重复组容器，见上「追加」节。）
 
 ## 共享盘上的评测资产
 
@@ -140,7 +160,10 @@ docker exec -e M=<模型名> eval-<短名> bash -lc "python3 /root/verify_ctx.py
 
 ## 注意事项
 
-1. **并行评测**：4 个容器可同时跑，但**评测期间不要同时跑性能测试**（抢 GPU 会污染精度，见 `_shared/EVAL.md`）。
+1. **并行评测**：多个容器可同时跑（2026-09-21 实测 **4 组同模型评测并行**正常），
+   但**评测期间不要同时跑性能测试**（抢 GPU 会污染精度，见 `_shared/EVAL.md`）。
+   ⚠️ **受控对照实验必须显式传 `--eval-batch-size`**：不传则脚本自动探测，各组可能探到不同并发，
+   实验就不可比了（reka 重复性实验固定 `--eval-batch-size 1`）。
 2. **换模型时**：由于 1:1 绑定，只需改**对应容器**的 `context.yaml`；容器名与模型的对应关系见上表。
 3. **容器重启后** `context.yaml` 仍在（写在容器可写层，非 tmpfs）。但若 `docker rm` 重建，需重新写入。
 4. **`--model-name` 必须是 served name**，不能传路径——它同时是 API 请求的 model 字段。

@@ -2,8 +2,70 @@
 
 - **失败报告**：flagrelease_fail_reports/Mthreads/FAILED_Mthreads_reka-flash-3_202608020152.md
 - **原始失败类型**：精度不达标（rel_drop 超阈值）+ 性能不达标
-- **日期**：2026-09-20
-- **本次阶段**：✅ **服务已起、冒烟通过**（尚未跑精度评测）
+- **日期**：2026-09-20（2026-09-21 补记 50 题判定 + 启动重复性实验）
+- **本次阶段**：❌ **50 题筛查不达标**（50.0%）→ 🔬 **重复性实验进行中**（4 组独立 50 题并行）
+
+---
+
+## 50 题筛查结果（2026-09-20）
+
+| 项目 | 值 |
+|------|----|
+| 得分 | **50.0%（25/50）** |
+| NV 基线 | 表内 **59** → 退化 **+15.25%**；按 metax 裁定改用 NV 原生 **53.54** → 退化 **−6.61%** |
+| 判定 | ❌ **两种基准都超 5% 容差**（`accuracy_compare` 退出码 1） |
+| 采样 | ✅ 已确认生效：`[gen] 采用模型 generation_config.json 采样参数: {'temperature': 0.6, 'top_p': 0.95, 'top_k': 1024}` |
+| `max_tokens` / `max_model_len` | 16384 / 24576（对齐 metax v6 口径） |
+| 截断 / runaway | `truncation_detected: false` / `runaway_count: 0` |
+| 并发 / 耗时 | 自动探测选定 `eval_batch_size: 1` / 评测段 10611s（约 2.95h） |
+| 产物 | `release_run_logs/reka-flash-3/{gpqa_50.json,verdict_50.json,eval_50.log}` |
+
+**→ metax 的根因在摩尔侧已排除**（采样参数确实生效了，不是被静默忽略）。
+
+**与 metax v6 的同题对照**（同为前 50 题）：
+
+| | 答对 | 共对 | 独对 |
+|---|:----:|:----:|------|
+| metax v6 | 28/50 = 56.00% | 21 | **7**（idx 13,22,23,26,28,35,43） |
+| mthreads | 25/50 = 50.00% | 21 | **4**（idx 17,36,45,46） |
+
+净差 3 题（6pt）。**但 temp=0.6 采样下 50 题本身有 ±2~3 题的抖动**，7:4 的不对称**不足以定论**。
+
+## 🔬 重复性实验（2026-09-21 起，进行中）
+
+为把「6pt 差距是真实退化还是噪声」问清楚，**用完全相同的配置独立跑 4 组 50 题**（temp 统一取
+reka 自带的 `generation_config.json`），量出抖动带再看差距是否落在带外。
+
+- 4 组唯一变量是采样随机性：同数据集（前 50 题）、同采样（0.6/0.95/1024）、同 `max_tokens=16384`、
+  同 `--enforce-eager`、**显式固定 `--eval-batch-size 1`**（跳过自动探测，保证可比）。
+- 4 个服务分在 GPU0/1/2/3（端口 8004/8005/8002/8006），4 个 eval 容器 1:1 绑定。
+- 输出：`release_run_logs/reka-flash-3/repeat-r1..r4/`。
+- **实验设计与判定方法见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节**，起跑细节见 [[PROGRESS]]。
+
+> 判定规则：4 组若**全部落在 50% 附近** → 差距是真的，继续定位真凶（**先查采样口径与 `max_tokens`，
+> 别折腾算子黑名单**——metax 在 v1~v5 耗过五轮）；若**出现 ≥56% 的组** → 需按全量 198 题重新判定。
+
+## 开启算子列表（实测，2026-09-21 取自容器 `/tmp/flaggems_enable_oplist.txt`）
+
+> **文件名注意**：`flaggems_enable_oplist.txt`（`oplist` 连写，**不是** `op_list`），在**服务容器** `/tmp/` 下。
+> 它是 plugin-FL 在算子首次被 dispatch 时打出的 DEBUG 记录，反映**实际触达**的算子。
+
+白名单：`VLLM_FL_FLAGOS_WHITELIST=silu_and_mul,rms_norm,rotary_embedding`
+
+**→ 开启算子列表：`["rms_norm", "rotary_embedding", "silu_and_mul"]`**（3 个全部真实触达）
+
+| dispatch op | 落到哪个后端 | 下层实现（`flag_gems`） | 实测是否触达 |
+|-------------|--------------|------------------------|:------------:|
+| `rms_norm` | `default.flagos` | `gems_rms_forward` → `rms_norm_forward`（含 `fused_add_rms_norm`） | ✅ |
+| `rotary_embedding` | `default.flagos` | `gems_rope_forward` → `apply_rotary_pos_emb` | ✅ |
+| `silu_and_mul` | `default.flagos` | `gems_silu_and_mul` → `silu_and_mul.forward` | ✅ |
+| `attention_backend` | `vendor.musa` | ——（厂商后端，**不是** FlagGems） | ✅ |
+
+> 与另两个模型（Phi-4 / LFM2.5）**一致**：白名单 3 个全部触达、文件 11 行。
+> 2026-09-21 新起的 3 个重复组容器实测同样为这 3 个算子（未因新容器而变化）。
+> 对照：Qwen3.5 白名单 3 个**只触达 1 个** —— **白名单 ≠ 实际触达**，报告一律以本文件实测为准。
+
+## ⚠ 评测阶段预警（尚未处理，跑评测前必看）
 
 ---
 

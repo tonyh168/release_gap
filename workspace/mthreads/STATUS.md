@@ -3,7 +3,10 @@
 > 更新：2026-09-21
 > ✅ **50 题筛查已跑完**（4 个模型，2026-09-20 17:21–20:08 跑分，2026-09-21 出判定）——
 > **3 个达标 / 1 个不达标**，明细见下「📊 50 题筛查结果」
-> ⚠️ 4 个模型的服务与 eval 容器**仍在 `mthreads-25` 上运行**；下一步是 **198 题全量定稿**
+> 🔬 **reka-flash-3 正在做重复性实验**：4 组独立 50 题评测并行跑（2026-09-21 14:26 起，ETA ~3h）——
+> 目的是量出 temp=0.6 采样下 50 题口径的**抖动带**，判断 50% 与 metax 56% 的差距是否只是噪声。
+> 见下「🔬 reka-flash-3 重复性实验」
+> ℹ️ 另外 3 个模型的服务容器**已停掉释放显存**（2026-09-21）；下一步是 **198 题全量定稿**
 >
 > 机型：MTT S5000 × 8（单卡 80GB） | 宿主机：`mthreads-25` / `mthreads-27`（`mthreads-26` 当前不可用）
 > 镜像：`harbor.baai.ac.cn/flagrelease-public/flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
@@ -70,6 +73,41 @@
 
 > **「开启算子列表」一律以容器 `/tmp/flaggems_enable_oplist.txt` 的实测为准**（注意文件名是 `oplist` 连写），
 > **不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。逐模型实测名单见 `fixes/*.md` 与 `reports/*.md`。
+
+## 🔬 reka-flash-3 重复性实验（进行中，2026-09-21）
+
+**目的**：判明「摩尔 50.0% vs metax v6 56.0%」的 6pt 差距**是真实退化还是采样抖动**。
+
+**依据**：reka-flash-3 的判定基准是 temp=**0.6** 采样（模型自带 `generation_config.json`）。
+50 题口径下，±2~3 题的抖动是正常的；我们与 metax 的同题对照是「共同答对 21 / metax 独对 7 / 摩尔独对 4」，
+7:4 的不对称**还不足以定论**。→ 用**同一套配置独立跑 4 组**，量出抖动带再看差距是否落在带外。
+
+**设置（4 组完全一致，唯一变量是采样随机性）**：
+
+| 项目 | 值 |
+|------|----|
+| 数据集 / 题数 | `gpqa_diamond` **50 题**（与 metax v6 前 50 题同题，可直接对照） |
+| 采样参数 | **reka 自带 gc：temp=0.6 / top_p=0.95 / top_k=1024**（4 组同一份，`[gen]` 行已逐组确认） |
+| thinking | `thinking_model: true`（`context.yaml`） |
+| 服务 | `--max-model-len 24576`（→ `max_tokens=16384`）、`--enforce-eager`、TP=1、`-gmu 0.9` |
+| 并发 | **显式 `--eval-batch-size 1`（跳过自动探测）** —— 受控实验必须固定同一值 |
+
+**矩阵**：
+
+| 组 | 服务容器 | GPU | 端口 | eval 容器 | 输出目录 | 状态 |
+|:--:|----------|:---:|:----:|-----------|----------|------|
+| r1 | `flagrelease-fix-reka-flash-3` | GPU2 | 8002 | `eval-reka-flash-3` | `release_run_logs/reka-flash-3/repeat-r1/` | 🔄 评测中 |
+| r2 | `flagrelease-fix-reka-flash-3-r2` | GPU0 | 8004 | `eval-reka-flash-3-r2` | `release_run_logs/reka-flash-3/repeat-r2/` | 🔄 评测中 |
+| r3 | `flagrelease-fix-reka-flash-3-r3` | GPU1 | 8005 | `eval-reka-flash-3-r3` | `release_run_logs/reka-flash-3/repeat-r3/` | 🔄 评测中 |
+| r4 | `flagrelease-fix-reka-flash-3-r4` | GPU3 | 8006 | `eval-reka-flash-3-r4` | `release_run_logs/reka-flash-3/repeat-r4/` | 🔄 评测中 |
+
+> 起跑 2026-09-21 14:26，每组约 3h（reka 单题延迟 ~125s × 50 题 ÷ 并发 1），**并行 ETA ~17:30**。
+> ⚠️ **r1 是重跑**：原 2026-09-20 那一轮（`release_run_logs/reka-flash-3/gpqa_50.json`）是自动探测出的并发 1，
+> 本轮为「4 组调用完全一致」显式固定 `--eval-batch-size 1` 重跑一遍；**原结果保留**，可作第 5 个参考样本。
+>
+> **怎么看结果**：4 组分数散布 = 抖动带。若 4 组**全部落在 50% 附近**、且与 56% 差距稳定存在
+> → 差距是真的，**不是噪声**，需要继续定位真凶（算子 A/B 或 `max_tokens` 口径）；
+> 若 4 组里出现 ≥56% 的组 → 50% 那一轮落在抖动下沿，**需按全量 198 题重新判定**。
 
 ## 图例
 
@@ -202,22 +240,23 @@
 - **198 题全量定稿**：**0 / 4**（⬅ 下一步）
 - **待开始**：42 / 50
 
-### 当前 GPU 占用（mthreads-25，2026-09-21 复查）
+### 当前 GPU 占用（mthreads-25，2026-09-21 14:30）
 
-| 卡 | 服务 | 端口 | max_model_len | 实测显存 |
-|----|------|:----:|:-------------:|:--------:|
-| GPU0 | Phi-4-reasoning-plus | 8000 | 32768 | 73799 MiB |
-| GPU1 | LFM2.5-1.2B-Thinking | 8001 | 32768 | 73868 MiB |
-| GPU2 | reka-flash-3 | 8002 | **24576** | 73744 MiB |
-| GPU3 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | 32768 | 73395 MiB |
-| GPU4–7 | **空闲（4 张，0 MiB）** | — | — | — |
+| 卡 | 服务 | 容器 | 端口 | max_model_len | 实测显存 |
+|----|------|------|:----:|:-------------:|:--------:|
+| GPU0 | reka-flash-3（**重复组 r2**） | `flagrelease-fix-reka-flash-3-r2` | 8004 | 24576 | 73779 MiB |
+| GPU1 | reka-flash-3（**重复组 r3**） | `flagrelease-fix-reka-flash-3-r3` | 8005 | 24576 | 73744 MiB |
+| GPU2 | reka-flash-3（**重复组 r1**，原服务） | `flagrelease-fix-reka-flash-3` | 8002 | 24576 | 73744 MiB |
+| GPU3 | reka-flash-3（**重复组 r4**） | `flagrelease-fix-reka-flash-3-r4` | 8006 | 24576 | 73744 MiB |
+| GPU4–7 | **空闲（4 张，0 MiB）** | — | — | — | — |
 
-> 4 个服务均以 `--enforce-eager` 运行（**摩尔 graph 模式不可用**，见下「评测前必须改的服务侧设置」），
-> 首都测试全部通过（均正确答「北京」）。评测参数总表见 [[EVAL_SETTINGS]]。
+> 4 个服务均 TP=1、`--enforce-eager`、`--gpu-memory-utilization 0.9`。
+> **Phi-4-reasoning-plus / LFM2.5-1.2B-Thinking / Qwen3.5-27B-Distilled 三个容器已于 2026-09-21 停止**
+> （`docker stop`，退出码 137；容器保留未删，可 `docker start` 原样恢复），显存已确认归零。
+> 权重、日志、评测产物都在 `/datapool` 上，不受容器停止影响。
 >
-> 💡 **容量参考（2026-09-21 实测）**：每服务 TP=1 独占 1 卡（`--gpu-memory-utilization 0.9` 实占 ~73.7GB/80GB）。
-> 当前 4 卡在跑 + 4 卡空闲。**若停掉其中 3 个服务，可再起 7 个同规格（TP=1）服务**——
-> 一台机最多 8 个「一模型一卡」的服务。想在同一张卡上多开，必须显式下调 `--gpu-memory-utilization`。
+> 💡 **容量参考**：每服务 TP=1 独占 1 卡（实测 ~73.7GB/80GB）。**一台机最多 8 个「一模型一卡」的服务**；
+> 想在同一张卡上多开必须显式下调 `--gpu-memory-utilization`。当前 4 卡在跑 + 4 卡空闲。
 
 ### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
 
