@@ -23,8 +23,9 @@
 
 **实验结论**：5 轮同配置评测落成 **两簇**（`50,50 | 58,58,58`），**均值 54.8%**，
 **分簇原因未查明**（老容器已停，发起人决定不追）。
-判定**依基准而定**：按 metax 裁定的 53.54 → 达标；按表内 59 → 不达标。
-完整结论见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节，口径限定见报告发布字段注记。
+判定：按 metax 裁定的 NV 原生 **53.54** → 反超 1.26pt → **达标**
+（表内 59 不采用，口径不符，理由见 [[STATUS]] 与报告的「基准取值」节）。
+完整结论见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节。
 
 > ⚠️ 老容器 `flagrelease-fix-reka-flash-3` **已停**（它对应原轮 + r1，也是唯一出 50% 的那一簇）。
 > **r2/r3/r4 三个服务仍在跑**（可直接接着做 198 题全量），各自的 eval 容器 1:1 绑定。
@@ -59,7 +60,7 @@
 | Phi-4-reasoning-plus | **58.0%** | 46 | ✅ 达标 | [[reports/Phi-4-reasoning-plus_report]] |
 | LFM2.5-1.2B-Thinking | **32.0%** | 29.0 | ✅ 达标 | [[reports/LFM2.5-1.2B-Thinking_report]] |
 | Qwen3.5-27B-Distilled | **78.0%** | 75 | ✅ 达标 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
-| reka-flash-3 | **54.8%**（5 轮均值） | 59 / 53.54 | ⚠️ **依基准而定** | [[reports/reka-flash-3_report]] |
+| reka-flash-3 | **54.8%**（5 轮均值） | **53.54** | ✅ 达标（反超 1.26pt） | [[reports/reka-flash-3_report]] |
 
 ---
 
