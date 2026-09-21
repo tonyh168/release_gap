@@ -195,7 +195,47 @@ python3 accuracy_compare.py \
 
 | iter | 配置 | GPQA | vs 56.0 | runaway / 截断 | 判定 |
 |:----:|------|:----:|:-------:|:---:|:---:|
-| 1 | TP=8 / TRITON_ATTN / eager / mlen=32768 / bl=sort,sort_stable | *(见下)* | | | |
+| 1 | graph 优先（失败回退 eager）/ TP=8 / TRITON_ATTN / mlen=32768 | *(见下)* | | | |
+
+---
+
+## 🔄 无人值守运行状态（2026-09-21 19:03 交接）
+
+> **用户 19:03 退出 session，流程转为后台无人值守。**
+
+**driver 脚本**：`/root/qwen25-72b-driver.sh`（宿主机）
+**NFS 副本**：`/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.sh`（机器重启后可从这里复原）
+**全程日志**：`/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.log`
+
+**脱离会话验证（已实测）**：driver 进程 `PPID=1`、`SID=PGID=自身 PID`（`setsid` 完全脱离），
+**ssh 断开 / session 结束都不会影响它**。
+
+**交接时刻状态**：
+
+| 项 | 状态 |
+|----|------|
+| driver 进程 | ✅ 存活（PID 1499720），停在 Phase 1 |
+| 权重下载 | 🔄 **51 GB / ~145 GB（11/37 分片）**，`modelscope download` 运行中 |
+| 端口 8015 | ⬜ 空（服务未起） |
+| serve 日志 | ⬜ 未生成 |
+
+**driver 后续自动执行**（无需人工介入）：
+
+1. 轮询到 `modelscope download` 退出 → 校验分片数是否为 37（不足则 FATAL 停下）
+2. 起 **graph** 服务（util 0.85 / max-num-seqs 16 / blacklist 含 `broadcast_to,mm,addmm`）
+3. 等就绪最多 30 分钟 → 失败则**自动回退 eager**（util 0.9 / 最小黑名单 + `--enforce-eager`）
+4. 冒烟（短 prompt + 256-token 单请求吞吐实测，为并发探测提供依据）
+5. `fast_gpqa.py` 跑 gpqa_diamond 50 题（每 10 分钟往 driver.log 报一次进度）
+6. `accuracy_compare.py` 出 `verdict_gpqa_iter1.json`（基线 56.0，达标线 ≥53.2%）
+
+**预计时间线**：下载约 19:25 完成 → 服务就绪 19:30~20:00（graph 需图捕获，比 eager 慢）
+→ 评测（graph 下预计 1~3 小时，取决于并发探测选到几路）。
+
+**⚠️ 回来后需要做的**：
+- 读 `driver.log` 的 `SERVE_MODE=` 行，确认**最终跑的是 graph 还是回退了 eager**（这个结论对后续 dense 模型有参考价值）
+- 回填本文件「迭代记录 / 结果 / 提炼到 KNOWLEDGE」三节
+- 更新 `STATUS.md` 的计数与状态表行
+- ⚠️ 若 driver 在 FATAL 处停下（分片数 <37、或两种模式都没起来），日志尾部会有 `driver end (FAILED)`，需人工介入
 
 ---
 
