@@ -113,18 +113,40 @@ python3 accuracy_compare.py --v2 /models/release_run_logs/${model_name}/gpqa.jso
 | 第2次 | +mm,bmm,addmm,rms_norm,fused_add_rms_norm,softmax,softmax_out,to_copy,copy_,true_divide,pow_scalar,reciprocal,silu,silu_and_mul（共16算子） | 评测进行中（198题全量） | — | 2026-09-16 18:47 启动；eval pid 716 in eval-scope |
 
 ## 现象
-（贴启动失败关键行；原报告全空，37分钟即结束）
+
+原报告：服务启动失败，流程 37 分钟即结束，全部数据为空。
+
+新镜像下服务可正常启动（`TRITON_ATTN`），iter1 完成 50 题评测：
+**GPQA 56.0%（28/50）**，NV 基线 63.0%，`aligned=false`（↓11.11%）。
+
+iter1 产物关键字段：`mode=thinking`、`temperature=0.6`、`max_tokens=20000`、
+`truncation_detected=false`、`eval_batch_size=16`；**复读检测 3/50**
+（index 45/47/48，`high_repeat_and_compressible`，均因 `max_tokens` 截断），
+即这 3 题大概率是无效作答，对 56.0% 有向下污染。
+
+iter2（198题全量，16算子黑名单）于 2026-09-16 18:47 启动，但
+`eval_fullset.log` **为 0 字节**、无 result/verdict 产出，未取得任何结果。
 
 ## 定位
-（vLLM 0.24.0 是否能起服务；crash 时缺实现的算子名）
+
+- 原报告的"服务启动失败"在新镜像（vLLM 0.24.0）下未复现，服务可起。
+- 精度侧：iter1 50 题小样本，56.0% vs 63.0%，超 5% 容差；但存在 3 题复读污染，小样本下不足以定论。
+- iter2 全量验证未完成（日志 0 字节，未取到结果），**精度差距是否真实存在没有被证实**。
 
 ## 处置
-（补充黑名单 / 调整 TP / 降 max-model-len）
+
+**0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。** 依据：数量已够，本模型不需要修复；
+容器已停，iter2 不再重启。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：**56.0%**（iter1，50 题；iter2 全量未取得结果）
+- NV 基线：63.0%
+- 相对退化：↓11.11%（超 5% 容差）
+- 达标判定：**❌ 未达标**（`accuracy_compare` 退出码 1，`aligned=false`）
+- 产物：`/models/release_run_logs/QwQ-32B/verdict_gpqa_diamond.json`（2026-09-15）
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+thinking 模型在 `max_tokens` 截断处易触发复读（3/50），复读题必然是错答，
+小样本评测分数会因此被系统性拉低——50 题量级下需先扣掉复读题再看退化是否真实。

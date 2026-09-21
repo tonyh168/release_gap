@@ -1,0 +1,145 @@
+# t-head/Ministral-8B-Instruct-2410 修复日志
+
+- **失败报告**：flagrelease_fail_reports/T-Head/FAILED_T-Head_Ministral-8B-Instruct-2410_202609090702.md
+- **原始失败类型**：按人工裁定标记为迁移失败（精度在小样本容忍范围内，主要遗留性能验收问题）
+- **日期**：2026-09-16
+
+## 现象
+
+历史 T-Head 自动化报告（vLLM 0.24.0 / plugin-FL 0.3.0 的另一套自动化运行环境）留下的失败证据：
+
+- V2 GPQA `26.0%`，相对 NV 参考值 `30.0%` 差 2 题，精度按小样本规则达标；
+- 性能比 `91.8%`（vs 合成基线），步骤 7 禁用 OOT `silu_and_mul` 后优化到 `99.6%`，V3 沿用 V2 优化后结果；
+- 整体流程仍因性能验收被标记为失败（按人工裁定标记迁移失败）。
+
+本次在新镜像上重跑后的现象：
+
+- 服务正常启动，健康检查 HTTP `200`，`/v1/models` 返回模型名 `Ministral-8B-Instruct-2410`，监听端口 `18081`，绑定 GPU3；
+- 50 题 GPQA Diamond 完整结束（评测耗时 `1593.69` 秒），未检测到截断；
+- 当前得分比 NV 记录值低 2 个百分点，即 50 题只差 1 题；
+- 按单纯相对退化计算为 `6.67%`，超过 5% 阈值。
+
+## 定位
+
+- 本次没有发现服务崩溃、算子 crash、OOM、输出截断或答案解析错位（`parser_mismatch_count=0`）；
+- 精度偏差属于 50 题小样本的随机抖动范围：绝对差 1 题，命中项目小样本噪声容忍规则，因此 verdict 里 `raw_aligned=false`、`noise_adjusted=true`、`aligned=true`；
+- **本次“通过”依赖项目规定的小样本容忍规则，不是严格相对退化 ≤5% 的通过**，汇报时不能简写成“严格 5% 相对退化达标”；
+- 本次未重跑完整性能验收，历史遗留的性能验收问题（V2 91.8% → 禁用 OOT `silu_and_mul` 后 99.6%）本次未复现验证。
+
+## 处置
+
+1. 使用统一 PPU 镜像重新启动模型，在共享目录加载权重；
+2. 使用 GPU3、端口 `18081`、TP=1，保留当前 FlagOS 算子白名单（`attention_backend`、`rms_norm`、`rotary_embedding`、`silu_and_mul` 等路径由 FlagOS 接管）；
+3. 使用独立评测容器，固定 GPQA Diamond 50 题；
+4. 对原始分数执行答案提取审计和小样本噪声判定，同时记录 `current_score`、NV 分数、相对退化与绝对差题数；
+5. 逐条保留源日志的结论限定，不把本轮 50 题结果外推为完整 V1–V3 通过。
+
+本次实际运行配置：
+
+| 项目 | 值 |
+|------|---|
+| 镜像 | `harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100` |
+| 镜像 ID | `sha256:a54dcb164e0d9aad003884e6b0691400f6c8db1e56d513b03dc1c65d30f830ce` |
+| vLLM / PyTorch | `vllm 0.24.0+empty` / `torch 2.10.0` |
+| 模型路径 | `/models/Ministral-8B-Instruct-2410` |
+| GPU / 端口 / TP | `CUDA_VISIBLE_DEVICES=3` / `18081` / `1` |
+| 服务参数 | `--dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.85 --trust-remote-code --enforce-eager` |
+| 评测参数 | EvalScope `1.5.1`，50 题，`eval_batch_size=4`，`max_model_len=32768`，`max_tokens=24576` |
+| 服务日志 | `/models/_serve_logs/Ministral-8B-Instruct-2410-20260915_155906.log` |
+| 结果文件 | `/mnt/workspace/models/_eval_results/20260915_accuracy/formal_20260915_164849/Ministral-8B-Instruct-2410/Ministral-8B-Instruct-2410_gpqa_result.json` |
+
+镜像未重新构建、重新打 tag 或 push；容器可写层变化仅为安装 `modelscope==1.40.0`、`modelscope-hub==0.4.2`、产生 ModelScope/pip/vLLM model-info 缓存与 FlagGems/Triton 运行时临时文件；未修改 `/workspace/vllm`、`/workspace/vllm-plugin-FL`、`/workspace/FlagGems` 中的算子实现。容器基础环境中 `XPU_VISIBLE_DEVICES=all`，本次服务通过 `CUDA_VISIBLE_DEVICES=3` 绑定实际计算设备。
+
+## 结果
+
+- 修复后分 / NV 基线：`28.0%`（14/50） / `30.0%`
+- 达标判定（accuracy_compare 退出码）：通过，但属**小样本噪声容忍通过**——原始相对退化 `6.67%` 超过 5% 阈值（`raw_aligned=false`），因 50 题绝对差仅 1 题命中项目容忍规则（`noise_adjusted=true`）才判 `aligned=true`；源日志只给出 verdict.json，未记录 accuracy_compare 的退出码数值，退出码为 `<待补>`
+
+verdict.json 原文：
+
+```json
+{
+  "score": 28.0,
+  "evalscope_score": 28.0,
+  "total_questions": 50,
+  "truncation_detected": false,
+  "answer_extraction_audit": {
+    "checked": 50,
+    "format_corrected_score": 28.0,
+    "parser_mismatch_count": 0,
+    "invalid_evalscope_extract_count": 3
+  },
+  "verdict": {
+    "aligned": true,
+    "raw_aligned": false,
+    "noise_adjusted": true,
+    "nv_score": 30.0,
+    "current_score": 28.0,
+    "rel_drop": 0.0667,
+    "diff_questions": 1.0,
+    "threshold": 0.05
+  }
+}
+```
+
+限定说明（照抄源日志的本次处理结论）：当前 PPU 机器上的新镜像服务正常，50 题 GPQA 精度按项目小样本规则通过；性能和完整 V1–V3 对比本次未重测。本次完整性能验收未重测，不能据此宣称 V1–V3 全部通过。
+
+## 提炼到 KNOWLEDGE 的条目
+
+50 题 GPQA 的结果必须同时记录 `current_score`、NV 分数、相对退化和绝对差题数；Ministral 本次属于“原始相对退化超 5%，但按绝对差 1 题容忍通过”，后续汇报时不能简写成“严格 5% 相对退化达标”。
+
+---
+
+## 发布字段
+
+### 一、发布信息
+
+```bash
+# MODEL_SOURCE: mistralai/Ministral-8B-Instruct-2410
+# IMAGE: harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100
+# HARBOR_VER: V3
+# GPU: PPU-ZW810E, 16 × 96GB
+# TP: 1
+# VERDICT: ok
+# METRIC: gpqa_diamond
+# SCORE_ORIGIN: 30.0
+# SCORE_FLAGOS: 28.0
+# CONTAINER_DEVS: -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models --privileged --net=host --ipc=host --shm-size=512g
+```
+
+### 二、容器创建（宿主机执行）
+
+```bash
+docker run --init -it --privileged --net=host --ipc=host --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  --name flagos \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  /bin/bash
+```
+
+### 三、启动服务（容器内执行）
+
+```bash
+
+export VLLM_PLUGINS=fl
+export USE_FLAGGEMS=1
+export VLLM_FL_PREFER_ENABLED=true
+
+export VLLM_FL_FLAGOS_WHITELIST=lift_fresh,empty,zero_,zeros,arange_start,true_divide,pow_scalar,reciprocal,mul,unsqueeze,cos,sin,cat,to_copy,ones,narrow,fill_scalar_,mm_out,index,rand_like,linear,alias,full,argmax,lt_scalar,scalar_tensor,where_self,where_self_out,true_divide_,softmax,softmax_out,exponential_,unbind,add,copy_,sub,expand,scatter_,attention_backend,rms_norm,silu_and_mul,rotary_embedding
+
+export PPU_HOME=/usr/local/PPU_SDK
+export CUDA_HOME=/usr/local/PPU_SDK/CUDA_SDK
+export HF_ENDPOINT=https://hf-mirror.com
+/usr/local/bin/vllm serve /models/Ministral-8B-Instruct-2410 \
+  --served-model-name Ministral-8B-Instruct-2410 \
+  --host 0.0.0.0 \
+  --port 18081 \
+  --dtype bfloat16 \
+  --tensor-parallel-size 1 \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.85 \
+  --trust-remote-code \
+  --enforce-eager
+```

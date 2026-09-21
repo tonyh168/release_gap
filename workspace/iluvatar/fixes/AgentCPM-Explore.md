@@ -197,18 +197,43 @@ python3 accuracy_compare.py \
 ---
 
 ## 现象
-（上机后填：崩溃日志关键行 / silu_and_mul 报错详情）
+
+原报告：服务启动失败，`silu_and_mul` 算子缺失（Operator crash），无评测数据。
+
+新镜像下**问题未解决**：`serve.log`（2026-09-16）持续输出
+
+```
+EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+Error in chat completion stream generator.
+```
+
+评测侧随之失败——`eval.log` 末尾为 `openai.APIConnectionError: Connection error.` /
+`[ERROR] 评测失败: Connection error.`（后端已死，客户端连不上）。
+
+产出目录 `/models/release_run_logs/AgentCPM-Explore/` 下只有 `serve.log` + `eval.log` + `serve.pid`，
+**无 result、无 verdict**。
 
 ## 定位
-（新版 FlagGems 5.3.4.post1 是否已修复 silu_and_mul；是否还有其他缺失算子）
+
+- vLLM 0.24.0 + FlagGems 5.3.4.post1 下 `silu_and_mul` 未修复，服务始终未能稳定起来（EngineCore 崩溃循环）。
+- 崩溃发生在服务层，评测根本没跑起来，因此**没有任何精度数据**。
+- 未进一步排查具体缺失算子（未尝试扩大黑名单隔离）。
 
 ## 处置
-（加入黑名单的算子 / 确认 TRITON_MLA 适用性）
+
+**0918 决策：不再修复，标记为 ⏭️ 跳过（无需修复）。**
+
+如后续重启：可按原计划把 `silu_and_mul` 加入 `VLLM_FL_FLAGOS_BLACKLIST` 挡回原生 aten，
+再抓 `EngineCore` 栈确认是否还有第二个崩溃算子。
 
 ## 结果
-- 修复后 GPQA 正确率：
-- NV 基线：
-- 达标判定（accuracy_compare 退出码）：
+
+- 修复后 GPQA 正确率：**无**（服务未起，评测未产出）
+- NV 基线：36.0%
+- 达标判定：无法判定（无数据）
+- 产物：仅有 `serve.log` / `eval.log`，无 `verdict_*.json`
 
 ## 提炼到 KNOWLEDGE 的条目
-（一句话规律，若无则写"无新规律"）
+
+`EngineDeadError` 崩溃循环会让评测端表现为 `APIConnectionError`——看到评测报连接错误时，
+先查服务端 `serve.log` 是否 EngineCore 已死，不要把连接错误误判为评测脚本或网络问题。
