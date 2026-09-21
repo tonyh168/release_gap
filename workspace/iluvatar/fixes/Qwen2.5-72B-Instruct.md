@@ -17,14 +17,19 @@ hidden_size=8192  num_hidden_layers=80  num_attention_heads=64  num_key_value_he
 vocab_size=152064  max_position_embeddings=32768  torch_dtype=bfloat16
 ```
 
-- **不是推理模型**：名字不含 `qwen3`/`qwq` 等关键词，`generation_config.json` 虽写 `temperature=0.7`，
-  但 `fast_gpqa.detect_thinking()` 将其判定为 standard → `temperature=0.0` 贪心。
-  这与 QwQ/TinyR1 的情况不同——**Qwen2.5-Instruct 系列官方推荐的就是贪心解码**，
-  且历史上其他厂商（如 hygon/Qwen2.5-7B-Instruct）也是按 standard 口径评测，
-  **本模型不打算套用 thinking wrapper**（见「评测参数」节）。
+- **不是推理模型**：名字不含 `qwen3`/`qwq` 等关键词，`fast_gpqa.detect_thinking()` 判定为 standard，
+  **不套 thinking wrapper**（不加 `remove_until`，不用 0.6/0.95 那套）。这与 QwQ/TinyR1 的情况不同——
+  Qwen2.5-Instruct 系列本来就该按 standard 口径评。
+- **采样参数取模型自带的 `generation_config.json`**（用户 2026-09-21 明确要求）：
+  `temperature=0.7 / top_p=0.8 / top_k=20 / repetition_penalty=1.05`（`do_sample=true`）。
+  > 📌 这里要避免**两个方向的误判**：① 「gen config 里有温度 ≠ 它是推理模型」——它仍是 standard 分支，
+  > 不加 thinking wrapper；② 「判成 standard ≠ 就必须贪心」——本模型官方 gen config 明写 `do_sample=true`，
+  > 按用户要求**以模型自带生成配置为准**，而不是沿用评测脚本的贪心默认。
+  > 落地方式：给 `fast_gpqa.py` 加了 `--model-dir`（见 STATUS 专节），
+  > 实测确认生效：`temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05`。
 - **attention backend**：普通 GQA → **`TRITON_ATTN`**（不能用 `TRITON_MLA`）。
-- **TP 估算**：bf16 权重 ~145 GB ÷ 32 GB/卡 ≈ 4.5 → 向上取 2 的幂次 → **TP=8**（与 XingChen4 参考一致）。
-  8 卡总显存 256 GB，权重占 145 GB（57%），KV cache 与激活余 ~110 GB，
+- **TP 估算**：bf16 权重实测 136 GB ÷ 32 GB/卡 ≈ 4.25 → 向上取 2 的幂次 → **TP=8**（与 XingChen4 参考一致）。
+  8 卡总显存 256 GB，权重占 136 GB（53%），KV cache 与激活余 ~120 GB，
   满足 SOP「每卡剩 30–40% 空余」。
 - **权重来源**：`Qwen/Qwen2.5-72B-Instruct`（ModelScope 官方仓库，一次命中，无需 HF 回退）。
 
@@ -178,6 +183,7 @@ docker exec eval-scope bash -c "
 cd /workspace/eval_scripts
 python3 fast_gpqa.py --model-name Qwen2.5-72B-Instruct \
   --api-base http://127.0.0.1:8015/v1 \
+  --model-dir /models/flagrelease/fixes_models/Qwen2.5-72B-Instruct \
   --output /models/release_run_logs/Qwen2.5-72B-Instruct/gpqa.json
 python3 accuracy_compare.py \
   --v2 /models/release_run_logs/Qwen2.5-72B-Instruct/gpqa.json \
@@ -187,6 +193,10 @@ python3 accuracy_compare.py \
 "
 ```
 
+> ⚠️ **`--model-dir` 是本轮新加的选项**（2026-09-21）：不传它时 `_resolve_model_dir()` 定位不到模型目录，
+> 采样会**静默回退成贪心**（temp 0.0）——本模型就必须传，否则又变回「贪心误评」。
+> 评测日志里出现 `[gen] 采用模型 generation_config.json 采样参数: {...}` 才算生效。
+
 达标口径：`(v2 - 56.0) / 56.0 ≥ -5%`，即 **≥ 53.2%** 判达标（50 题，另有小样本容忍：绝对差 ≤2 题）。
 
 ---
@@ -195,47 +205,82 @@ python3 accuracy_compare.py \
 
 | iter | 配置 | GPQA | vs 56.0 | runaway / 截断 | 判定 |
 |:----:|------|:----:|:-------:|:---:|:---:|
-| 1 | graph 优先（失败回退 eager）/ TP=8 / TRITON_ATTN / mlen=32768 | *(见下)* | | | |
+| — | **v2 driver（作废）** | — | — | — | ❌ **空跑失败，非服务问题**：脚本 bug 导致 vLLM 从未启动，见下节 |
+| 1 | v3 driver：graph 优先（失败回退 eager）/ TP=8 / TRITON_ATTN / mlen=32768 / **采样取 generation_config.json** | *(待出)* | | | |
 
 ---
 
-## 🔄 无人值守运行状态（2026-09-21 19:03 交接）
+## ⚠️ 首轮（v2 driver）空跑失败：两个脚本 bug，vLLM 从未启动（2026-09-21 19:26~20:27）
 
-> **用户 19:03 退出 session，流程转为后台无人值守。**
+**现象**：driver 日志显示 graph 超时未就绪 → 回退 eager → 又超时 → `driver end (FAILED)`。
+**看起来**像"两种模式都起不来 / 平台不稳"。**实际**：**vLLM 一次都没被启动过**。
 
-**driver 脚本**：`/root/qwen25-72b-driver.sh`（宿主机）
-**NFS 副本**：`/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.sh`（机器重启后可从这里复原）
-**全程日志**：`/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.log`
+排查证据（全部指向"从未启动"，而非"启动失败"）：
 
-**脱离会话验证（已实测）**：driver 进程 `PPID=1`、`SID=PGID=自身 PID`（`setsid` 完全脱离），
-**ssh 断开 / session 结束都不会影响它**。
+| 检查 | 结果 |
+|------|------|
+| `ixsmi` 8 张目标卡 | **全程 68MiB / 32768MiB，0% util** —— 没人跑过 |
+| 容器内 `ps -ef \| grep vllm` | 无进程 |
+| `serve_graph.log` / `serve_eager.log` | **从未生成**（driver 自己 `tail` 时报 `No such file or directory`） |
+| 权重 | ✅ 完好：**37/37 分片，136 GB**（19:26 就下完了，不是下载问题） |
 
-**交接时刻状态**：
+**根因 1（致命）：宿主机路径当容器路径用。**
+`start_serve()` 里执行的是
 
-| 项 | 状态 |
-|----|------|
-| driver 进程 | ✅ 存活（PID 1499720），停在 Phase 1 |
-| 权重下载 | 🔄 **51 GB / ~145 GB（11/37 分片）**，`modelscope download` 运行中 |
-| 端口 8015 | ⬜ 空（服务未起） |
-| serve 日志 | ⬜ 未生成 |
+```bash
+docker exec -d $CT bash -c "... nohup vllm serve ... > $RUNLOG/serve_$MODE.log 2>&1 &"
+```
 
-**driver 后续自动执行**（无需人工介入）：
+而 `RUNLOG=/mnt/share/models/release_run_logs/$MODEL` 是**宿主机路径**。
+修复容器只挂了 `-v /mnt/share/models:/models`，**容器内没有 `/mnt/share`** →
+bash 打开重定向失败 → **整条 `nohup vllm serve` 根本没执行**（也没有任何报错）。
 
-1. 轮询到 `modelscope download` 退出 → 校验分片数是否为 37（不足则 FATAL 停下）
-2. 起 **graph** 服务（util 0.85 / max-num-seqs 16 / blacklist 含 `broadcast_to,mm,addmm`）
-3. 等就绪最多 30 分钟 → 失败则**自动回退 eager**（util 0.9 / 最小黑名单 + `--enforce-eager`）
-4. 冒烟（短 prompt + 256-token 单请求吞吐实测，为并发探测提供依据）
-5. `fast_gpqa.py` 跑 gpqa_diamond 50 题（每 10 分钟往 driver.log 报一次进度）
-6. `accuracy_compare.py` 出 `verdict_gpqa_iter1.json`（基线 56.0，达标线 ≥53.2%）
+**根因 2：存活检查自匹配。**
+`docker exec $CT bash -c 'pgrep -f "vllm serve"'` —— pgrep 只排除自己，
+不排除父 `bash -c`，而后者的 cmdline 里就含 `vllm serve` 这串 → **恒返回 0**。
+后果：本该第 1 轮就报"进程消失、快速失败"，实际 `grep -c 进程消失` = **0 次**，硬等满 30 分钟 ×2。
 
-**预计时间线**：下载约 19:25 完成 → 服务就绪 19:30~20:00（graph 需图捕获，比 eager 慢）
-→ 评测（graph 下预计 1~3 小时，取决于并发探测选到几路）。
+**结论**：这两条都是 driver 脚本自身的 bug，**与模型、算子、平台无关**；
+「graph 能不能起」这个原本要回答的问题，**本轮没有拿到任何数据**。
 
-**⚠️ 回来后需要做的**：
-- 读 `driver.log` 的 `SERVE_MODE=` 行，确认**最终跑的是 graph 还是回退了 eager**（这个结论对后续 dense 模型有参考价值）
-- 回填本文件「迭代记录 / 结果 / 提炼到 KNOWLEDGE」三节
-- 更新 `STATUS.md` 的计数与状态表行
-- ⚠️ 若 driver 在 FATAL 处停下（分片数 <37、或两种模式都没起来），日志尾部会有 `driver end (FAILED)`，需人工介入
+**修复（v3）**：
+
+1. 容器内一律用 `/models/release_run_logs/$MODEL`（两个容器都挂了同一目录），宿主机侧只用 `/mnt/share/...` 读日志
+2. 存活检查改 `pgrep -f "[v]llm serve"`（字符类让模式串自身不命中）
+3. **启动后 90 秒硬校验**：进程在 **且** 日志文件非空，不合格立刻 FAIL 并打印 serve 日志 —— 不再空等 30 分钟
+4. 评测加 `--model-dir`；评测命令内部的 `--output` 也全部改成容器内路径
+5. 新增 **4a 小样本（`--limit 2`）先验**：先确认整条链路 + `[gen]` 采样参数行，再跑 50 题全量
+
+**实测**：v3 启动后 **5 秒**即通过硬校验（`[graph] 进程与日志均已就位（5s）`），服务真起来了。
+
+---
+
+## 🔄 无人值守运行状态（v3，2026-09-21 21:57 重启）
+
+> **v2 空跑失败（见上节）后，2026-09-21 21:57 用修好的 v3 driver 重启，仍然全程无人值守。**
+
+| 项 | 值 |
+|----|----|
+| driver 脚本 | `/root/qwen25-72b-driver.sh`（宿主机） |
+| NFS 副本 | `/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver_v3.sh` |
+| 全程日志 | `/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.log` |
+| 脱离验证 | ✅ 进程 `PPID=1`、`SID=PGID=自身 PID`（`setsid`），ssh 断开不影响 |
+| 起点 | Phase 1 权重检查直接通过（37/37 分片，136 GB） |
+| 硬校验 | ✅ 5 秒通过（进程 + 日志都就位） |
+
+**v3 自动执行链**：起 graph（util 0.85 / max-num-seqs 16 / cudagraph-capture-sizes 16 /
+blacklist `sort,sort_stable,mm,addmm,broadcast_to`，超时 **60 分钟**）
+→ 失败回退 eager（util 0.9 / 最小黑名单 + `--enforce-eager`，超时 **45 分钟**）
+→ 冒烟 + 单请求吞吐实测 → **4a 小样本 `--limit 2`（验证链路与 `[gen]` 采样行）**
+→ 4b gpqa_diamond 50 题（最多 12h）→ verdict（基线 56.0，达标线 ≥53.2%）。
+
+**⚠️ 回来后先看这三样**：
+
+1. `driver.log` 的 **`SERVE_MODE=`** 行 —— 确认最终跑的是 **graph** 还是**回退 eager**
+   （这个结论对后续 dense 模型有参考价值；v2 那一轮没拿到）
+2. **`[gen] 采用模型 generation_config.json 采样参数:`** 行 —— 确认采样口径真的生效
+   （temp 0.7 / top_p 0.8 / top_k 20 / rp 1.05），否则评测又变回贪心，分数不可用
+3. 尾部若无 `driver end` 而是 `FATAL` / `driver end (FAILED)` → 需人工介入
 
 ---
 

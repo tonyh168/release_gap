@@ -1037,6 +1037,7 @@ def run_fast_gpqa(
     eval_batch_size: Optional[int] = None,
     skip_truncation_check: bool = False,
     max_tokens_override: Optional[int] = None,
+    model_dir: Optional[str] = None,
 ) -> Dict:
     """
     快速精度评测主流程（GPQA Diamond / MMLU / MATH-500）。
@@ -1045,6 +1046,8 @@ def run_fast_gpqa(
         dataset: 数据集名（DATASET_CONFIG 的 key）
         limit: 题数上限。None → 数据集默认题数；0 → 全量。
                mmlu 为 per-subset 语义（每个子集各取 limit 题）。
+        model_dir: 模型权重目录。给了就用它读 generation_config.json，
+                   避免 model_name 是 NV key（非路径）时采样参数退回默认。
     Returns:
         结果 dict
     """
@@ -1107,7 +1110,8 @@ def run_fast_gpqa(
 
     # Step 4: 构建 generation_config（优先采用模型自带 generation_config.json 的采样参数，
     # 读取失败/缺失时无声回退现有默认；纯增强层，绝不新增评测报错点）
-    gen_config = resolve_gen_params(is_thinking, max_tokens, model_path=model_name)
+    gen_config = resolve_gen_params(is_thinking, max_tokens,
+                                    model_path=(model_dir or model_name))
 
     # Step 5: 构建 dataset_args（few-shot 按数据集配置；thinking 模型加 remove_until 过滤）
     dataset_args = {dataset: {'few_shot_num': cfg['few_shot_num']}}
@@ -1380,6 +1384,9 @@ def main():
                         help='显式指定单次生成最大 token 数；指定后跳过会改写该上限的截断探测')
     parser.add_argument('--output', type=str, default=None,
                         help='结果 JSON 输出路径（如 /flagos-workspace/results/gpqa_native.json）')
+    parser.add_argument('--model-dir', type=str, default=None,
+                        help='模型权重目录（容器内路径，如 /models/flagrelease/fixes_models/Qwen2.5-72B-Instruct）；'
+                             '指定后用该目录下的 generation_config.json 作为采样参数')
     args = parser.parse_args()
 
     # 加载配置
@@ -1490,6 +1497,7 @@ def main():
                 eval_batch_size=args.eval_batch_size,
                 skip_truncation_check=args.skip_truncation_check,
                 max_tokens_override=args.max_tokens,
+                model_dir=args.model_dir,
             )
             reports.append((dataset, report))
 

@@ -128,3 +128,32 @@
 - 两次对比评测**必须用完全相同的参数**，否则结果不可比。
 - 评测期间**不要同时跑性能测试**，两者抢 GPU 会污染精度。
 - `truncation_detected: true` 说明输出被 max_tokens 截断，分数偏低不可信；需加大 `--max-model-len` 后重跑。
+
+---
+
+## 七、无人值守 driver 脚本（自动起服务/评测）
+
+> 背景：人退出 session 后，流程交给宿主机上的 `driver.sh` 自动跑（等下载 → 起 vLLM → 冒烟 → 评测 → verdict）。
+> 下面两条是 2026-09-21 Qwen2.5-72B-Instruct **连续空等两轮 30 分钟、driver FAILED** 的根因，
+> 两条都会**伪装成"服务起不来/平台不稳"**，实际 vLLM 一次都没被启动过。
+
+- **现象**：driver 日志里 graph 与 eager 都"超时未就绪"，`docker inspect` 一切正常、卡也全空，serve 日志却永远不存在。
+  **根因**：**宿主机路径当容器路径用**。`docker exec $CT bash -c "nohup vllm serve ... > $RUNLOG/serve.log"` 里的
+  `$RUNLOG` 若是宿主机路径（如 `/mnt/share/...`），而容器只挂了 `-v /mnt/share/models:/models`
+  （容器内**没有** `/mnt/share`），则 bash 打开重定向失败 → **整条命令根本没执行**，也没有任何报错。
+  **处置**：凡是在 `docker exec` 里用的路径，一律写成**容器内路径**（`/models/...`）；
+  宿主机侧只用 `/mnt/share/...` 读日志。**判据**：driver 自己 `tail serve_*.log` 报
+  `No such file or directory` 就说明路径写错了，不要继续等。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **现象**：进程早就没了，存活检查却永远返回"活着"，于是一路空等到超时。
+  **根因**：`docker exec $CT bash -c 'pgrep -f "vllm serve"'` 会**自匹配** —— pgrep 只排除自己，
+  不排除父 `bash -c`，而后者的命令行里就含 `vllm serve` 这串，恒返回 0。
+  **处置**：用不自匹配的写法 `pgrep -f "[v]llm serve"`（字符类让模式串自身不命中），
+  并且**启动后加 90 秒硬校验**（进程在 **且** 日志文件非空），不合格立刻 FAIL，别给 30 分钟超时。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **通用教训**：**"超时未就绪"必须先分清"在加载"还是"根本没起来"**。
+  用 `pgrep` 确认进程、`ls -la` 确认日志文件存在且在增长，再谈是不是模型太大/算子有问题。
+  这两条一起出现时，浪费的不是几分钟，而是两轮 30 分钟 + 一次人工介入。
+

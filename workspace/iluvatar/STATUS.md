@@ -1,6 +1,6 @@
 # Iluvatar 模型修复状态总览
 
-> 更新：2026-09-21 19:10（**新增对象 Qwen2.5-72B-Instruct 开工**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
+> 更新：2026-09-21 22:00（**Qwen2.5-72B-Instruct：v2 driver 空跑失败 → 定位两个脚本 bug → v3 重跑中**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
 
 ## 当前计数
 
@@ -8,7 +8,8 @@
 
 - **✅ 已通过（10）**、**⏭️ 跳过无需修复（6）**：见状态表，**均以机器上 `verdict_*.json` 的 `aligned` 字段核对过**
 - **🔧 修复中（1）** —— **Qwen2.5-72B-Instruct**（2026-09-21 新增，原定 117，因 117 被占用改用 139）。
-  权重 145 GB / TP=8 / GPU 0-7 / :8015 / `TRITON_ATTN` / eager / mlen=32768，iter1 评测待出分
+  权重 136 GB / TP=8 / GPU 0-7 / :8015 / `TRITON_ATTN` / mlen=32768，iter1 评测待出分。
+  **注意：首轮（v2 driver）是脚本 bug 空跑失败，不是服务/模型失败** —— 见下方专节。
 - **🔧 待继续修复（2）** —— 两者都在排除法上走到尽头，剩余差距无法归因：
   - ❌ **OpenReasoning-Nemotron-1.5B** — math_500 **76.0%** vs 84.0%（↓9.52%）。
     **iter4 抬 `max_tokens` 到 65536 → 无效（76.5%→76.0%）**，**截断假设被证伪**。
@@ -152,7 +153,52 @@
 | OpenReasoning-Nemotron-1.5B | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 52.21 / 84.0 | mmlu 35.0%（iter1）; math_500 76.5%（iter2）→ 73.5%（iter3 thinking）→ **76.0%（iter4 抬 mt=65536，↓9.52%）** | `flagrelease-fix-openreasoning-nemotron-1.5b` GPU 0 / :8011 (u139) | **五项假设全部排除**（权重 sha256 一致 / 上下文 131072 / 并发 / 采样 iter3 反降 / **截断 iter4 抬上限无效**）。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度（逐组开关黑名单做对照）；mmlu 需干净重测**。⚠️ 别再调 max_tokens/采样 |
 | Phi-4-mini-reasoning | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 72.83 / 88.2 | mmlu 58.07%（iter1，**受 2048 截断污染**）/ math_500 41.0%（同污染）→ 59.5%（iter3，`--max-model-len 32768` + c8）→ **62.0%（iter4，T=0.8/0.95，↓29.71%）** | `flagrelease-fix-phi4-mini-reasoning` GPU 9 / :8012 (u139) | **截断已修**（+18.5pt）；**采样已修但只 +2.5pt** —— 复读 31→2（−94%）、撞顶 32→9（−72%），**行为改善巨大但分数没上来** → **采样不是主因**。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度；mmlu 需干净重测**。⚠️ 别再调采样/max_model_len |
 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | ✅ 已通过 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%）→ iter2: **80.0**（↑6.67%，反超基线）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | 完成，达标。iter2 配置：sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2，`--max-model-len 65536`（iter1 为 8192，把 max_tokens 压到 4096）。verdict 为 2026-09-18 实跑重建（`verdict_gpqa_iter2.json`，exit=0） |
-| Qwen2.5-72B-Instruct | 🔧 修复中 | 未开始（2026-09-21 新增对象） | gpqa_diamond | 56.0 | iter1 评测中 | `flagrelease-fix-qwen2.5-72b-instruct` GPU 0-7 / :8015 (u139) | **2026-09-21 开工**。Qwen2 dense GQA（80层/hidden 8192/8 KV heads），bf16 145 GB → **TP=8**；`TRITON_ATTN`（非 MLA）；**standard 分支（非推理模型，不套 thinking wrapper）**；mlen=32768 显式给满以避开 `auto_max_tokens` 截断坑。**原定 117，当日 117 被占用 → 改用 139** |
+| Qwen2.5-72B-Instruct | 🔧 修复中 | 未开始（2026-09-21 新增对象） | gpqa_diamond | 56.0 | iter1 评测中（v3 driver，2026-09-21 22:00 起） | `flagrelease-fix-qwen2.5-72b-instruct` GPU 0-7 / :8015 (u139) | **2026-09-21 开工**。Qwen2 dense GQA（80层/hidden 8192/8 KV heads），bf16 **136 GB** → **TP=8**；`TRITON_ATTN`（非 MLA）；**standard 分支（非推理模型，不套 thinking wrapper）**；mlen=32768 显式给满以避开 `auto_max_tokens` 截断坑；**采样改用模型自带 `generation_config.json`**（temp 0.7 / top_p 0.8 / top_k 20 / repetition_penalty 1.05，靠新加的 `--model-dir` 生效）。**原定 117，当日 117 被占用 → 改用 139**。⚠️ 首轮 v2 driver **空跑失败（脚本 bug，非服务失败）**，见下方专节 |
+
+---
+
+## 已知问题：无人值守 driver 空跑 —— 两个脚本 bug 伪装成"服务起不来"（**已修，v3 重跑**）
+
+- **现象（2026-09-21 19:26~20:27）**：v2 driver 报 graph 超时 → 回退 eager → 又超时 →
+  `driver end (FAILED)`。看上去"两种模式都起不来"。
+- **实际**：**vLLM 一次都没被启动过**。8 张卡全程空闲（`ixsmi` 68MiB/卡），
+  容器里没有任何 `vllm serve` 进程，serve 日志从未生成。权重完好（37/37 分片，136 GB）。
+- **根因 1（致命）**：**宿主机路径当容器路径用**。v2 用 `$RUNLOG=/mnt/share/models/release_run_logs/...`
+  做重定向 `> $RUNLOG/serve_graph.log`，但修复容器只挂了 `/mnt/share/models -> /models`，
+  容器内**没有 `/mnt/share`** → bash 打开重定向失败 → **整条 `nohup vllm serve` 根本没执行**。
+  driver 自己的 `tail -30 serve_graph.log` 报 `No such file or directory` 就是铁证。
+- **根因 2**：存活检查 `docker exec $CT bash -c 'pgrep -f "vllm serve"'` **自匹配**
+  （父 `bash -c` 的 cmdline 里就含 `vllm serve`，pgrep 不排除它）→ 恒为真 →
+  "进程消失"永远测不出来，两轮各空等 30 分钟。
+- **修复（v3，`/root/qwen25-72b-driver.sh`，NFS 副本 `driver_v3.sh`）**：
+  ① 容器内一律用 `/models/...` 写日志；② 存活检查改 `pgrep -f "[v]llm serve"`；
+  ③ **启动后 90 秒硬校验**（进程在 + 日志非空），不合格立刻失败，不再空等；
+  ④ 评测加 `--model-dir`。**实测 5 秒即通过硬校验**，服务真起来了。
+- **提炼**：已进 `_shared/KNOWLEDGE.md` 第七节。**教训："超时未就绪"必须先分清"在加载"还是"根本没起来"**
+  —— 用 pgrep 确认进程、`ls` 确认日志文件，再谈模型/算子问题。
+
+---
+
+## 新增能力：`fast_gpqa.py --model-dir`（采样参数取模型自带 generation_config.json）
+
+- **背景**：`resolve_gen_params()` 早有"采纳模型 `generation_config.json` 采样字段"的逻辑
+  （`_GEN_PARAM_WHITELIST = temperature/top_p/top_k/repetition_penalty`），但 `_resolve_model_dir()`
+  只在 `--model-name` 是**本地目录路径**或存在 `/flagos-workspace/shared/context.yaml` 时才生效。
+  流水线里 `--model-name` 是 NV key（如 `Qwen2.5-72B-Instruct`）→ **永远定位不到模型目录 → 静默回退默认**。
+- **改动（2026-09-21）**：新增 `--model-dir` 选项，显式指定模型权重目录（容器内路径），
+  优先级高于 `--model-name`。**纯增量，不传时行为与改动前完全一致**（不动其它模型已出分数的可比性）。
+- **文件**：NFS 规范副本 `/mnt/share/models/flagrelease/eval_methods/fast_gpqa.py`
+  （旧版备份 `fast_gpqa.py.bak-v0930-2155`），已 `docker cp` 到 139 的 `eval-scope:/workspace/eval_scripts/`；
+  仓库副本 `flagrelease_eval_methods/fast_gpqa.py` 同步打了同样的补丁。
+- **实测验证**（容器内）：
+  ```
+  不传 --model-dir: temperature=0.0, top_p=1.0            ← 贪心（旧行为）
+  传   --model-dir: temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05   ← 模型自带配置
+  ```
+- **用法**：`python3 fast_gpqa.py --model-name <NV key> --api-base ... \
+  --model-dir /models/flagrelease/fixes_models/<模型名> --output ...`
+- ⚠️ **注意可比性**：以后凡是传了 `--model-dir` 的评测，采样口径就变成"模型自带配置"，
+  与 0919~0920 那批（手写 0.6/0.95 或贪心）**不是同一口径**，跨轮对比时要注明。
 
 ---
 
