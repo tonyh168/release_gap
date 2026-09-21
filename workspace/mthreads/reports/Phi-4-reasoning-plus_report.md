@@ -95,7 +95,7 @@ metax「graph 快 10 倍」的经验在摩尔不适用。
 # GPU: MTT S5000, 1 × 80GB
 # TP: 1
 # VERDICT: ok
-# METRIC: GPQA_Diamond
+# METRIC: gpqa_diamond
 # SCORE_ORIGIN: 46
 # SCORE_FLAGOS: 58.0
 # CONTAINER_DEVS: --privileged --shm-size=64g

@@ -111,7 +111,7 @@ iluvatar 侧（BI-V150，32GB 卡）同模型、同配置跑出 **70.0% vs NV 75
 # GPU: MTT S5000, 1 × 80GB
 # TP: 1
 # VERDICT: ok
-# METRIC: GPQA_Diamond
+# METRIC: gpqa_diamond
 # SCORE_ORIGIN: 75
 # SCORE_FLAGOS: 78.0
 # CONTAINER_DEVS: --privileged --shm-size=64g

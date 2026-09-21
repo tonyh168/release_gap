@@ -1,29 +1,29 @@
 # mthreads 工作进度快照
 
-> 记录时间：**2026-09-21 14:30**
-> 分支：`mthreads-init-0920` | 宿主机：`mthreads-25` | 镜像：`flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
+> 记录时间：**2026-09-21 17:30**
+> 分支：`mthreads-init-0921` | 宿主机：`mthreads-25` | 镜像：`flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
 >
 > ⚠️ **本文件是「当前该干什么」的快照**；逐模型结论看 [[STATUS]]，参数看 [[EVAL_SETTINGS]]，
-> 环境看 [[EVAL_INFRA]]，**逐模型完整交付物看 `reports/`**（3 份已生成）。
+> 环境看 [[EVAL_INFRA]]，**逐模型完整交付物看 `reports/`**（4 份已生成）。
 
 ---
 
 ## 🔴 正在后台运行的任务（**退出 session 不会中断**）
 
-**4 组 reka-flash-3 的 50 题重复性评测并行跑在 `mthreads-25` 上**（2026-09-21 14:26 起跑，ETA ~17:30）。
-进程由 `docker exec -d` 拉起到容器内，**不依赖本 session**，可以安全退出。
+**reka-flash-3 重复性实验的 r1 组仍在跑**（r2/r3/r4 已完成，均 **58.0%**）。
+r1 复用原服务容器（GPU2），进程由 `docker exec -d` 拉起，**不依赖本 session**。
 
-| 组 | 服务容器 / GPU / 端口 | eval 容器 | 输出目录 |
-|:--:|----------------------|-----------|----------|
-| r1 | `flagrelease-fix-reka-flash-3` / GPU2 / 8002 | `eval-reka-flash-3` | `release_run_logs/reka-flash-3/repeat-r1/` |
-| r2 | `flagrelease-fix-reka-flash-3-r2` / GPU0 / 8004 | `eval-reka-flash-3-r2` | `release_run_logs/reka-flash-3/repeat-r2/` |
-| r3 | `flagrelease-fix-reka-flash-3-r3` / GPU1 / 8005 | `eval-reka-flash-3-r3` | `release_run_logs/reka-flash-3/repeat-r3/` |
-| r4 | `flagrelease-fix-reka-flash-3-r4` / GPU3 / 8006 | `eval-reka-flash-3-r4` | `release_run_logs/reka-flash-3/repeat-r4/` |
+| 组 | 服务容器 / GPU / 端口 | eval 容器 | 得分 | 状态 |
+|:--:|----------------------|-----------|:----:|------|
+| r1 | `flagrelease-fix-reka-flash-3` / GPU2 / 8002 | `eval-reka-flash-3` | ⏳ | 🔄 跑至 47/50 |
+| r2 | `flagrelease-fix-reka-flash-3-r2` / GPU0 / 8004 | `eval-reka-flash-3-r2` | **58.0%** | ✅ 完成 |
+| r3 | `flagrelease-fix-reka-flash-3-r3` / GPU1 / 8005 | `eval-reka-flash-3-r3` | **58.0%** | ✅ 完成（**采用轮**） |
+| r4 | `flagrelease-fix-reka-flash-3-r4` / GPU3 / 8006 | `eval-reka-flash-3-r4` | **58.0%** | ✅ 完成 |
 
-**目的**：量出 temp=0.6 采样下 50 题口径的**抖动带**，判断摩尔 50.0% 与 metax v6 56.0% 的 6pt 差距
-是真实退化还是噪声。**实验设计与判定方法见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节。**
+**实验结论已出**：原轮 50.0% 是**采样下沿**，reka **改判达标**。
+完整结论、逐题对照与判定方法见 [[STATUS]] 的「🔬 reka-flash-3 重复性实验」节。
 
-每组产物：`gpqa_50.json`（跑完才有）、`eval_50.log`（实时）、`serve.log`（服务侧）。
+每组产物：`gpqa_50.json`、`eval_50.log`、`serve.log`，均在 `release_run_logs/reka-flash-3/repeat-r<组号>/`。
 
 **回来第一件事**：见文末「恢复工作」。
 
@@ -31,11 +31,11 @@
 
 ## 当前状态一览
 
-### 服务（`mthreads-25`，2026-09-21 14:30）
+### 服务（`mthreads-25`，2026-09-21 17:30）
 
 | 服务 | 卡 | 端口 | 状态 |
 |------|:--:|:----:|------|
-| reka-flash-3 × 4（重复组 r1–r4） | GPU0/1/2/3 | 8002/8004/8005/8006 | 🟢 运行中 |
+| reka-flash-3 × 4（重复组 r1–r4） | GPU0/1/2/3 | 8002/8004/8005/8006 | 🟢 运行中（r1 评测收尾中） |
 | Phi-4-reasoning-plus | — | — | ⏹️ **容器已停**（`docker stop`，2026-09-21） |
 | LFM2.5-1.2B-Thinking | — | — | ⏹️ **容器已停** |
 | Qwen3.5-27B-Distilled | — | — | ⏹️ **容器已停** |
@@ -43,14 +43,14 @@
 
 > 三个停掉的容器**保留未删**（`Exited (137)`），`docker start <容器>` 即可原样恢复；显存已确认归零。
 
-### 评测结果（50 题筛查，已全部出判定）
+### 评测结果（50 题筛查口径，**4 个全部达标**）
 
 | 模型 | 得分 | NV 基线 | 判定 | 交付物 |
 |------|:----:|:-------:|:----:|--------|
 | Phi-4-reasoning-plus | **58.0%** | 46 | ✅ 达标 | [[reports/Phi-4-reasoning-plus_report]] |
 | LFM2.5-1.2B-Thinking | **32.0%** | 29.0 | ✅ 达标 | [[reports/LFM2.5-1.2B-Thinking_report]] |
 | Qwen3.5-27B-Distilled | **78.0%** | 75 | ✅ 达标 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
-| reka-flash-3 | **50.0%** | 59 / 53.54 | ❌ 不达标 | 定性中（重复性实验） |
+| reka-flash-3 | **58.0%**（原轮 50.0%） | 59 / 53.54 | ✅ **达标**（重复实验改判） | [[reports/reka-flash-3_report]] |
 
 ---
 
@@ -77,8 +77,8 @@
 
 | # | 事项 | 状态 |
 |---|------|------|
-| 1 | **reka-flash-3 定性**（重复性实验） | 🔄 进行中，4 组并行 |
-| 2 | **3 个达标模型的 198 题全量定稿** | ⬜ 待做 —— **需要先 `docker start` 恢复服务容器**（已停） |
+| 1 | ~~reka-flash-3 定性（重复性实验）~~ | ✅ **已完成** —— 原轮 50.0% 判为采样下沿，**改判达标（58.0%）** |
+| 2 | **4 个模型的 198 题全量定稿** | ⬜ **下一步** —— reka 服务在跑；另 3 个需先 `docker start` 恢复容器 |
 | 3 | **`mthreads-26` 连不上** | ❌ 等发起人确认（bastion 报 `match asset failed: No found asset`） |
 | 4 | Phi-4-reasoning-plus 的算子 A/B | ⬜ 未做（留白名单就已达标 +12pt，故未做） |
 | 5 | Qwen3.5 算子覆盖面窄（白名单 3 个只触达 1 个） | ⬜ 原因未定位，已记录；**不影响达标** |
@@ -86,10 +86,12 @@
 
 ### 提交状态（2026-09-21）
 
-- 本分支 `mthreads-init-0920` 已 **rebase 到 `origin/main`（`b4e0532`）之上**，工作区干净。
+- 当前分支 **`mthreads-init-0921`**（从已 rebase 到 `origin/main(b4e0532)` 的 `mthreads-init-0920` 切出），已推送。
 - 早先那批产出（3 份 `fixes` + 3 份 `reports` + `report_template.md`）由提交 **`b127938`** 带入，
   已经过 **PR #15 合入 `origin/main`**。
-- 本轮新增提交：**`6bd8d23`**（reka 重复性实验相关文档 + 报告改名）。
+- `mthreads-init-0920` 上的提交：**`6bd8d23`**（reka 重复性实验文档 + 释放容器）、
+  **`4caebdc`**（报告文件名对齐 `_report.md` 约定）。
+- `mthreads-init-0921` 追加：**reka 定稿相关**（fixes + 报告 + STATUS/PROGRESS 同步）。
 - ⚠️ `b127938` 的提交信息是 **`sx`**（疑似误敲），内容没问题但信息无意义，**未改**（已推送过，改写需 force push）。
 
 ---
@@ -157,12 +159,15 @@ python3 -c "import json;d=json.load(open('repeat-r2/gpqa_50.json'));print({k:d.g
 - **evalscope 版本告警**：镜像内 1.11.1 vs 脚本期望 1.5.1，**仅 WARN 不阻塞**。
 - **reka 可能 runaway**：若 `runaway_count` 非零，分数需加注说明。
 
-### 5. 下一步（重复性实验之后）
+### 5. 下一步（重复性实验已收口）
 
-- **若 4 组散布窄（都 ~50%）** → 6pt 差距是真的 → 按 [[EVAL_SETTINGS]] 2.3 的「首个 A/B」继续定位
-  （**先查采样口径与 `max_tokens`，别折腾算子黑名单** —— metax 在这条路上耗了 v1~v5）。
-- **若出现 ≥56% 的组** → 50% 那轮落在抖动下沿 → **按全量 198 题重新判定**。
-- **无论哪种，3 个达标模型的 198 题全量定稿都要做**：先 `docker start` 恢复那 3 个服务容器。
+**结论**：reka-flash-3 改判**达标**（58.0%），50 题口径对本模型噪声达 8pt。
+
+- **4 个模型的 198 题全量定稿**（reka 尤其必须走全量）：
+  - reka-flash-3：4 个服务都在跑，直接复用（任选一个，改 `--limit 0`）
+  - Phi-4 / LFM2.5 / Qwen3.5：**先 `docker start` 恢复那 3 个服务容器**
+- 定稿判定仍用 `accuracy_compare.py`；**reka 的基准按 metax 裁定用 NV 原生 53.54**
+  （但 58.0% 对表内 59 也已达标，两种口径都过）。
 
 ---
 
