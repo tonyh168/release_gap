@@ -275,6 +275,46 @@ python3 accuracy_compare.py \
 
 ---
 
+## ✅ 采样口径生效验证（4a 小样本，2026-09-21 22:16）
+
+用户要求「评测参数要用模型权重目录下的 `generation_config.json`」。**三层证据链都核对过**：
+
+**① 脚本自报**（`gpqa_smoke.log`）：
+
+```
+[gen] 采用模型 generation_config.json 采样参数: {'temperature': 0.7, 'top_p': 0.8, 'top_k': 20, 'repetition_penalty': 1.05}
+```
+
+**② evalscope 实际任务配置**（`outputs/gpqa_diamond/20260921_141433/configs/task_config.yaml`，
+这是**真正下发到推理请求**的参数，比日志打印更硬）：
+
+```yaml
+eval_batch_size: 8
+max_tokens: 24576
+temperature: 0.7
+top_p: 0.8
+top_k: 20
+repetition_penalty: 1.05
+```
+
+**③ 与模型自带配置逐字段一致**：`generation_config.json` =
+`do_sample=true, temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05`（`pad/bos/eos` 除外）。
+
+**4a 小样本结果**（n=2，仅验链路，无统计意义）：
+
+| 项 | 值 |
+|----|----|
+| score | 100.0（2/2） |
+| truncation_detected | **False** |
+| runaway | **0**（`checked: 2, runaway_count: 0`） |
+| mode | **standard**（确认没套 thinking wrapper） |
+| max_tokens | 24576（`clamp(32768-8192, 4096, 32768)`，符合预期） |
+| 并发 | **8**（自动探测选定；serve 侧 KV cache 够） |
+
+**4a 耗时约 3 分钟**（含数据集下载与并发探测）。
+
+---
+
 ## ⚠️ 首轮（v2 driver）空跑失败：两个脚本 bug，vLLM 从未启动（2026-09-21 19:26~20:27）
 
 **现象**：driver 日志显示 graph 超时未就绪 → 回退 eager → 又超时 → `driver end (FAILED)`。
