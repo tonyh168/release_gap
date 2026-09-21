@@ -42,6 +42,182 @@
   **处置**：`.out` 变体一律写下划线；graph 模式黑名单需补全 `mm,mm_out,bmm,bmm_out,linear,...`，把 GEMM 挡回原生 aten。
   **来源**：metax/XingChen4-0907
 
+- **现象**：摩尔线程上 `import vllm` 直接崩，native（不开任何 flagos 组件）基线也起不来：
+  `AttributeError: module 'torch' has no attribute 'float4_e2m1fn_x2'`，栈在 `vllm/ir/tolerances.py:32`。
+  **根因**：vllm 0.20.2 的 `vllm/ir/tolerances.py` 在**模块导入期**就把 `torch.float4_e2m1fn_x2` 写进
+  `DEFAULT_TOLERANCES` 字典的 key，而 torch 2.7.1 / torch_musa 未提供该 dtype；导入即 AttributeError，
+  与模型无关，整台机器上所有 vllm 0.20.2 服务都受影响。
+  **处置**：①换 vLLM 0.24.0 口径的镜像（0.24 不再于导入期引用该 dtype）；②或临时 patch `tolerances.py`
+  去掉该 key / 改成惰性引用；③已提 issue 到 `flagos-ai/vllm-plugin-FL`（类型 startup-crash），
+  要求对 torch_musa 缺失的 float4 dtype 做兼容或延迟引用。
+  **来源**：mthreads/AceMath-RL-Nemotron-7B、mthreads/Darwin-28B-Opus、mthreads/Qwen3-4B-SafeRL（2026-08）
+
+- **现象**：摩尔线程上「服务启动失败 + 精度不达标 + 性能不达标」三类同时出现在同一份报告里（50 份报告里 8 份这样写）。
+  **根因**：报告判定粒度粗——流程中途失败时，未执行的阶段被填了默认占位判定，不代表三项独立都失败。
+  **处置**：**别按报告结论的条数分配工时**；先看该报告有没有真实评测数据（`accuracy_compare_*.json` / benchmark 结果），
+  没有数据的按「从未评测过」处理，用本工作区 SOP 重跑一遍即可定性。
+  **来源**：mthreads 50 份报告聚类（其中 7 份明确是流程会话/容器准备中断，非芯片问题）
+
+- **现象**：把其他厂商的 `GEMS_VENDOR=<厂商>` + `VLLM_PLUGINS=fl` 口径照搬到摩尔，起服务时没有生效（或困惑于该设哪个）。
+  **根因**：**摩尔这套镜像是 plugin-FL 的 dispatch 机制，不走 `GEMS_VENDOR`**。实测（`vllm_fl/utils.py` + 镜像
+  `docker inspect`）：`VLLM_PLUGINS=fl` 已**内置**在镜像 ENV 里（启动即打印 `Platform plugin fl is activated`），
+  真正的开关是 `VLLM_FL_PREFER_ENABLED`（全局，默认 true）和 `USE_FLAGGEMS`（FlagGems，**默认 true = 已开**），
+  算子粒度用 `VLLM_FL_FLAGOS_WHITELIST` / `VLLM_FL_FLAGOS_BLACKLIST`。
+  **处置**：摩尔不要写 `GEMS_VENDOR`、不要重复 export `VLLM_PLUGINS`；要关 FlagGems 用 `USE_FLAGGEMS=0`。
+  **通用教训**：**换厂商镜像时先读容器内 plugin 的 README/源码确认开关变量名**，别按上一家的惯例抄——
+  厂商镜像的 vllm 安装路径也可能不同（摩尔在 `/usr/local/bin/vllm`，其余厂商是 `/opt/conda/bin/vllm`）。
+  **来源**：mthreads `flagrelease_mthreads-gmi_vllm024plugin_base:08281629` 实测（2026-09-20）
+
+- **现象**：摩尔起服务时 vLLM 打告警 `Unknown vLLM environment variable detected: VLLM_FL_FLAGOS_WHITELIST`，
+  容易误判为「白名单没生效」。
+  **根因**：vLLM 只校验自己的 `VLLM_*` 命名空间，`VLLM_FL_FLAGOS_WHITELIST` 是 plugin-FL 读的，vLLM 不认识就报一句。
+  **处置**：**忽略该告警**。验证白名单是否真生效，看 EngineCore 里这几行即可（有几个算子就该有几行，不多不少）：
+  ```
+  [INFO] [vllm_fl.dispatch.manager] Op 'rms_norm'         using 'default.flagos'
+  [INFO] [vllm_fl.dispatch.manager] Op 'rotary_embedding' using 'default.flagos'
+  [INFO] [vllm_fl.dispatch.manager] Op 'silu_and_mul'     using 'default.flagos'
+  ```
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：摩尔起服务日志里有整段 traceback：`RuntimeError: Cannot re-initialize MUSA in forked subprocess.
+  To use MUSA with multiprocessing, you must use the 'spawn' start method`，但服务**照样正常起来**。
+  **根因**：报错发生在 `vllm/usage/usage_lib.py` 的**用量上报**路径——它 fork 子进程去读设备属性，
+  撞上 torch_musa 的 "MUSA 不能在被 fork 的子进程里重新初始化" 检查。
+  **处置**：①**别当成启动失败**——只要最终有 `Application startup complete` 就是好的；
+  ②日志分析脚本**不要按 `Traceback` 关键字判死**，摩尔日志里这条是常态；
+  ③想消掉噪声用 `VLLM_NO_USAGE_STATS=1`（或 `DO_NOT_TRACK=1`）。
+  **注意**：`VLLM_WORKER_MULTIPROC_METHOD=spawn` **挡不住**这条——触发点不是 worker 而是上报路径。
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：摩尔起服务时告警 `patch_moe_topk_softmax_for_musa: cannot import topk_softmax_flaggems —
+  MoE models will fail on MUSA`，以及 `Failed to register Reference operators: 'ReferenceBackend' object
+  has no attribute 'moe_align_block_size'`。
+  **根因**：plugin-FL 给 MUSA 打的 MoE 补丁拿不到 FlagGems 的 `topk_softmax` 实现（模块循环导入）。
+  **处置**：**dense 模型无影响**（Phi-4-reasoning-plus 实测正常）。**MoE 模型要重点验证**——
+  摩尔失败清单里的 MoE：`gpt-oss-20b`、`Moonlight-16B-A3B-Instruct`、`Qwen3-30B-A3B-Instruct-2507`、
+  `kanana-1.5-15.7b-a3b-instruct`、`LFM2-2.6B-Exp`（MoE 版）。
+  **来源**：mthreads/Phi-4-reasoning-plus（2026-09-20）
+
+- **现象**：`Phi-4-reasoning-plus`、`Magistral` 这类 reasoning 模型评测时被当成普通模型（贪心 + 小 max_tokens）。
+  **根因**：`fast_gpqa.py` 的 `THINKING_PATTERNS` 是**关键词白名单**（`qwen3`/`qwq`/`deepseek-r1`/`deepseek-r2`/
+  `light-r1`/`minicpm4.1`/`mimo`/`hunyuan`），**名字里没有这些词的 reasoning 模型一律识别不出来**。
+  Phi-4-reasoning-plus 实测输出带 `<think>`，但不在名单里。
+  **处置**：靠 `context.yaml` 显式标记（优先级高于关键词）：
+  ```yaml
+  model:
+    local_path: <容器内模型目录>
+    thinking_model: true
+  ```
+  注意该文件路径被脚本**硬编码**为 `/flagos-workspace/shared/context.yaml`——容器没挂 `/flagos-workspace` 时
+  要在容器内建同路径目录。
+  **来源**：mthreads/Phi-4-reasoning-plus 服务冒烟（2026-09-20）；同类问题曾见于 hygon/Magistral-Small-2506
+  （摩尔侧同批实测确认：`LFM2.5-1.2B-Thinking` 输出 `<think>`、`reka-flash-3` 输出 `<reasoning>`，**三个都不在名单里**）
+
+- **现象**：vLLM 服务端启动时打 WARNING：`Default vLLM sampling parameters have been overridden by the
+  model's generation_config.json: {...}`，于是以为「采样参数问题已经被 vLLM 自动解决了」。
+  **根因**：**服务端确实采纳了模型采样参数作为默认值**，但评测脚本会在请求里**显式传 `temperature=0.0`**，
+  显式值覆盖服务端默认 → 照样退化成贪心。
+  **处置**：①**别以为看到这条 WARNING 就不需要修评测侧**——`context.yaml` 该补还得补；
+  ②**绝不要加 `--generation-config vllm`**——那会主动丢弃模型采样参数，让问题更严重。
+  **来源**：mthreads/reka-flash-3 服务实测（2026-09-20）
+
+- **现象**：混合 SSM 模型（LFM2 系，config 带 `conv_L_cache` / `block_*` 字段）在摩尔起服务时告警
+  `Add 2 padding layers, may waste at most 20.00% KV cache memory`。
+  **根因**：卷积层与注意力层结构不同，vLLM 需补 padding 层对齐层数。
+  **处置**：**不影响正确性**，可正常服务（实测 LFM2.5-1.2B-Thinking 短/长 prompt 均 200）。
+  但 KV cache 利用率最多损失 20%，配合大 `max_model_len`（该模型 128000）时要核算显存。
+  另：这类模型**不要指定 TRITON_MLA**（iluvatar 经验），摩尔走默认 `--attention-backend` 即可。
+  **来源**：mthreads/LFM2.5-1.2B-Thinking（2026-09-20）
+
+- **现象**：小模型（1.2B）独占一张 80GB 卡，实测占用 73882 MiB。
+  **根因**：`--gpu-memory-utilization 0.9` 是**按卡容量**预留 KV cache，与模型大小无关
+  ——1.2B 的小模型也会把整卡 73GB 全部吃掉。
+  **处置**：想在同一张卡上多开服务，必须显式下调 `--gpu-memory-utilization`；
+  否则「一模型独占一卡」。8 卡机器上跑 50 个模型时这条很关键。
+  **来源**：mthreads/LFM2.5-1.2B-Thinking（2026-09-20，权重仅 2.2GB 却占用 73.8GB）
+
+- **现象**：起服务时按模型 config 的 `max_position_embeddings` 走，结果 KV cache 装不下 / 起不来。
+  **根因**：**不能直接信模型声明的上下文长度**，要先按 KV cache 反算。每 token KV 大小 =
+  `层数 × 2(K,V) × kv_heads × head_dim × dtype字节`。head_dim 大的模型（如 256）极其吃 KV。
+  **实例**：mthreads/`Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` —— 64 层 × 4 kv_heads × 256 head_dim
+  = **256 KB/token**；权重 52GB 后仅剩约 20GB 给 KV，模型默认 262144（256K）需 **64GB**，必然装不下。
+  显式 `--max-model-len 32768`（8GB）后才起来。
+  **处置**：起任何新模型前先算一遍；模型默认值超过可用 KV 时**显式传 `--max-model-len`**。
+  评测若报 `truncation_detected:true`，**逐级上调**（32768→65536→…），别一步跳到模型上限。
+  **来源**：mthreads/Qwen3.5-27B-Distilled（2026-09-20）；同类风险见各厂商 128k/256K 长上下文模型
+
+- **现象**：同一个算子白名单下，不同模型日志里注册到 `default.flagos` 的算子数不一样
+  （Phi-4-reasoning-plus 3 个：`rms_norm`/`rotary_embedding`/`silu_and_mul`；
+  Qwen3.5-27B-Distilled 只有 `silu_and_mul` 1 个）。容易误判成「白名单没生效」。
+  **根因**：`Op 'X' using 'default.flagos'` 这行是**算子首次被 dispatch 时**才打印的（惰性），
+  不是启动时一次性列出全部白名单。模型架构不同 → 触达的算子不同；Qwen3.5 的 rms_norm/rotary
+  可能走了 fused 或专用实现，压根没经过 dispatch 层。
+  **处置**：①**别用「注册了几个算子」判断白名单是否生效**——要看有没有 `OpManager initialized: N ops`
+  这行（它反映的是总算子集），以及具体哪些 op 被 dispatch；
+  ②反过来，这个差异本身是**有价值的探针**：它说明该模型的哪些算子**实际走了 FlagGems**，
+  写修复报告时应明确列出，否则「算子替换覆盖率」会说不清。
+  **来源**：mthreads/Phi-4-reasoning-plus vs Qwen3.5-27B-Distilled 对照（2026-09-20）
+
+- **现象**：担心摩尔镜像不支持新架构（如 Qwen3.5、带 MTP 的模型），不敢起。
+  **根因**：vLLM 0.24.0 覆盖面比预期广。查法：
+  ```bash
+  grep -n "<架构名>" /usr/local/lib/python3.10/dist-packages/vllm/model_executor/models/registry.py
+  ls /usr/local/lib/python3.10/dist-packages/vllm/model_executor/models/ | grep -i <关键词>
+  ```
+  **实例**：`Qwen3_5ForConditionalGeneration` 在 registry 第 566 行有映射（→ `qwen3_5`），
+  且存在 `qwen3_5_mtp.py`；mthreads 镜像**直接起成功**，无需额外适配。
+  **处置**：起服务**前**花 10 秒查 registry，比起来之后再排查快得多。
+  **来源**：mthreads/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled（2026-09-20）
+
+- **现象**：同一个模型架构（Phi-4 系，GQA 40Q/10KV），不同厂商给出的算子结论**完全相反**：
+  metax/Phi-4-mini-instruct 实测「`rms_norm` + `silu_and_mul` 走 FlagGems 是精度退化根因，加黑名单后
+  26%→44% 达标」；t-head/phi-4 却把这两个算子**留在白名单里**拿到最好成绩（66%→70%）。
+  **根因**：算子级的精度结论**跨平台不可移植**——同一算子的 FlagGems 实现 vs 各厂商原生实现，
+  数值路径不同，在 A 芯片上是根因、在 B 芯片上可能无害甚至更优。
+  **处置**：**引用其他厂商的算子结论时，只当作「优先尝试的 A/B 假设」，不要当结论照搬**。
+  首轮按本平台统一口径起服务，不达标时**第一个 A/B 就试这个假设**。
+  **来源**：metax/Phi-4-mini-instruct vs t-head/phi-4 对照（2026-09-20 横比）
+
+- **现象**：思考 `thinking_model: true` 后，评测跑完但 `gpqa.json` 的 `score=null`，
+  日志报 `AttributeError: 'list' object has no attribute 'strip'`（栈在 `detect_runaway`）。
+  **根因**：部分 thinking 模型的 `message.content` 是 **list 结构**（分段内容），
+  而 `detect_runaway` 按字符串处理。**评测本身是成功的**，只是分数写不出。
+  **处置**：**别重跑**，从 evalscope 报告恢复：
+  `outputs/gpqa_diamond/<时间戳>/reports/<模型名>/gpqa_diamond.json` 的 `metrics[0].score`，
+  手写最小 result JSON 再跑 `accuracy_compare`。
+  **来源**：iluvatar/LFM2.5-1.2B-Thinking、iluvatar/Qwen3.5-27B-Distilled（2026-09-17）
+
+- **现象**：`nv_baseline.yaml` 里的分数与 NV 原生实测对不上，导致「差 1~2 分不达标」。
+  **根因**：基线表的值可能来自 NV **失败报告**里的参考分，口径与「NV 原生 + 官方镜像 + 同题量」
+  的实测不是一回事。例：reka-flash-3 表中 `gpqa_diamond: 59`，而 NV 原生 198 题实测只有 **53.54**；
+  同一份 NV 报告还记录了 NV 硬件上 plugin-FL 同样造成 12pt 退化（60→48）——说明该模型对 plugin-FL
+  敏感是**跨平台共性**，不是本平台独有。
+  **处置**：**差 1~2 分就贴近阈值时，先质疑基线口径**，别急着调算子。必要时按同机同镜像同题量
+  亲手复现一份 NV 基准，并像 metax 那样**把基准取值裁定写进修复日志**。
+  **来源**：metax/reka-flash-3 基准取值裁定（2026-09-19）
+
+- **现象**：⚠️ **「去掉 `--enforce-eager` 就是 graph 模式」这条经验在摩尔线程上不成立**。
+  4 个模型去掉 `--enforce-eager` 后**全部启动失败**：
+  ```
+  RuntimeError: MUSA driver error: operation not permitted when stream is capturing
+  ```
+  栈在 torch inductor 生成的代码里（`/tmp/torchinductor_root/.../xxx.py` 的
+  `buf0 = empty_strided((s72, 5120), (5120, 1), device='musa', ...)`），
+  最终表现为 `RuntimeError: Engine core initialization failed`。
+  **根因**：**MUSA 驱动不允许在 stream capture 期间分配显存**。vLLM 默认的
+  `cudagraph_mode=PIECEWISE` 需要在 capture 中对 inductor 编译产物做输出 buffer 分配，MUSA 直接拒绝。
+  这与 metax 的经验**相反**（metax/reka-flash-3 v6 用 graph 跑到 160 tok/s）。
+  **处置**：
+  1. **摩尔一律用 `--enforce-eager`**，不要照搬 metax 的 graph 口径；
+  2. 退一步的「只编译不捕获」`-cc '{"cudagraph_mode": "NONE"}'` **可启动**，
+     但实测**比 eager 更慢**（LFM2.5-1.2B：eager 3.95s vs 只编译 5.42s 跑同样的 2262+256 token），
+     **不建议**；
+  3. 想在摩尔上试 cudagraph，只能走 vLLM 的 env 逃生口 `VLLM_USE_BREAKABLE_CUDAGRAPH=1`
+     （断言里显式允许），未验证。
+  **教训**：**「graph 比 eager 快 10 倍」是 metax 的实测，不是通用规律**——CUDA graph 能不能用，
+  取决于驱动是否允许 capture 期间分配。换平台必须重新验证。
+  **来源**：mthreads 四模型实测（2026-09-20）
+
 ---
 
 ## 二、精度不达标（rel_drop 超 5% 阈值）
@@ -102,6 +278,24 @@
   `≥20k` 长响应档正确率 **12.5% → 36.7%**。
   **来源**：metax/reka-flash-3（2026-09-18；注：此问题影响本项目**全部 10 个模型**的历轮评测，
   只是多数模型本就该贪心评测而未暴露）
+
+- **现象**：摩尔线程上「精度不达标」和「性能不达标」成对出现（17 个精度不达标里 16 个同时报性能不达标），
+  且全部集中在开满 FlagGems 全量算子（约 51–62 个）的 V2/V3 阶段。
+  **根因**：尚未定位到单一算子——现象上更像「全量算子替换在摩尔后端上整体偏慢 + 数值路径偏差」的叠加。
+  **处置**：摩尔侧首轮**不要开全量**。先按 `VLLM_FL_FLAGOS_WHITELIST=silu_and_mul,rms_norm,rotary_embedding`
+  这类安全集跑通并出分，再按「精度优先」逐步放开；一旦出现吞吐骤降或分数下掉，就把该算子退回。
+  （Hygon/Qwen2.5-7B-Instruct 已验证该安全集可用；摩尔待实测。）
+  **来源**：mthreads 50 份报告聚类（DASD-4B-Thinking、GLM-4.7-Flash、LFM2-2.6B-Exp、Light-R1-14B-DS、
+  Moonlight-16B-A3B-Instruct、OpenMath-Nemotron-14B-Kaggle、Qwen3-4B-SafeRL、VibeThinker-1.5B、ZR1-1.5B、
+  gemma-3-1b-it、gpt-oss-20b、llama-3-Korean-Bllossom-8B、phi-4、reka-flash-3、rnj-1-instruct、Dhanishtha-2.0-preview）
+
+- **现象**：摩尔线程上 FlagGems 使能后 mmlu 评测**生成失控（runaway）**，模型不复读却停不下来，
+  精度无法评测（FluentlyQwen2.5-32B，V2 镜像 `…vllm0.24.0…plugin0.3.0…:202609050940-v2`）。
+  **根因**：报告未定位到算子（同模型另提了 accuracy degradation + performance degradation 两个 issue）；
+  评测侧也无法用 runaway 分数判定达标。
+  **处置**：先收窄算子白名单重跑；同时固定 `--max-tokens` 与 `--eval-batch-size`，把 `runaway_count`
+  和 `truncation_detected` 当准入条件——两项非零时不采信分数。
+  **来源**：mthreads/FluentlyQwen2.5-32B（2026-09-05）
 
 ---
 
@@ -171,3 +365,16 @@
 - **`max_tokens` 无法通过 CLI 指定**（脚本设计禁止，由 `auto_max_tokens()` 按
   `max_model_len - 8192` 自适应，且截断检测还会自动翻倍）。需间接控制时，
   调**服务端 `--max-model-len`** 即可：如要 max_tokens=16384，就把 `--max-model-len` 设为 24576。
+
+- **引用历史报告的"性能比"前先确认基线来源**：摩尔线程的报告里大量出现
+  `baseline_source: v2_initial_x1.2`（用 V2 初始性能 ×1.2 合成 V1 基线），
+  Phi-3.5-mini 等报告明确标注"性能基线为合成值，非实测 V1"。
+  这类比值只能当参考，**不能当达标依据**；本轮判定一律以 `accuracy_compare.py` 退出码为准。
+  **来源**：mthreads/Phi-3.5-mini-instruct、Darwin-28B-Coder、iFlow-ROME 等报告
+
+- **long-CoT 模型在慢速芯片上会先撞评测预算，再谈精度**：
+  摩尔 `OpenReasoning-Nemotron-7B` 在 V2 全量算子下 mmlu 只跑到 427/1140 就到预算上限；
+  `Apodex-1.0-4B-SFT` 同样是 V2 起单题耗时显著变长后未闭环。
+  处置：显式固定 `--max-tokens` + `--eval-batch-size`（受控 A/B），必要时先只跑 `--limit 0` 的
+  小子集确认稳定性，再决定是否跑全量；不要用"跑不完"直接判芯片不达标。
+  **来源**：mthreads/OpenReasoning-Nemotron-7B、mthreads/Apodex-1.0-4B-SFT
