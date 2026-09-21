@@ -47,9 +47,9 @@
 
 | 模型 | 得分 | NV 基线 | 判定 | 交付物 |
 |------|:----:|:-------:|:----:|--------|
-| Phi-4-reasoning-plus | **58.0%** | 46 | ✅ 达标 | [[reports/Phi-4-reasoning-plus]] |
-| LFM2.5-1.2B-Thinking | **32.0%** | 29.0 | ✅ 达标 | [[reports/LFM2.5-1.2B-Thinking]] |
-| Qwen3.5-27B-Distilled | **78.0%** | 75 | ✅ 达标 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
+| Phi-4-reasoning-plus | **58.0%** | 46 | ✅ 达标 | [[reports/Phi-4-reasoning-plus_report]] |
+| LFM2.5-1.2B-Thinking | **32.0%** | 29.0 | ✅ 达标 | [[reports/LFM2.5-1.2B-Thinking_report]] |
+| Qwen3.5-27B-Distilled | **78.0%** | 75 | ✅ 达标 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
 | reka-flash-3 | **50.0%** | 59 / 53.54 | ❌ 不达标 | 定性中（重复性实验） |
 
 ---
@@ -66,9 +66,10 @@
 | 6 | 评测环境搭建（4 个 eval 容器 + 脚本 + 离线数据集） | [[EVAL_INFRA]] |
 | 7 | **50 题筛查跑完 4/4 并出判定** | **3 达标 / 1 不达标**，见 [[STATUS]] |
 | 8 | **逐模型实测算子列表**（取自容器 `/tmp/flaggems_enable_oplist.txt`） | 写入 4 份 `fixes/*.md`，**发现 Qwen3.5 白名单 3 个只触达 1 个** |
-| 9 | **生成 3 份发布报告**（照 `workspace/report_template.md`） | `mthreads/reports/*.md`，含发布字段四块（已做格式自检） |
+| 9 | **生成 3 份发布报告**（照 `workspace/report_template.md`） | `mthreads/reports/*_report.md`，含发布字段四块（已做格式自检） |
 | 10 | 释放显存：停掉 3 个非 reka 服务容器 | GPU0/1/3 归零 |
 | 11 | 起 3 个 reka 容器 + 3 个配套 eval 容器，启动 4 组重复性评测 | 本文档第 1 节 |
+| 12 | **报告文件名对齐仓库约定** | 由 `<模型名>.md` 改为 **`<模型名>_report.md`**（仓库既有 41 份发布报告都用这个后缀，发布工具按后缀扫） |
 
 ---
 
@@ -81,7 +82,15 @@
 | 3 | **`mthreads-26` 连不上** | ❌ 等发起人确认（bastion 报 `match asset failed: No found asset`） |
 | 4 | Phi-4-reasoning-plus 的算子 A/B | ⬜ 未做（留白名单就已达标 +12pt，故未做） |
 | 5 | Qwen3.5 算子覆盖面窄（白名单 3 个只触达 1 个） | ⬜ 原因未定位，已记录；**不影响达标** |
-| 6 | **本次改动未提交 git** | ⬜ 4 改 3 新增（`STATUS.md` / 3 份 `fixes` / `reports/`） |
+| 6 | ~~本次改动未提交 git~~ | ✅ 已提交并 rebase 到 `origin/main`（见下「提交状态」） |
+
+### 提交状态（2026-09-21）
+
+- 本分支 `mthreads-init-0920` 已 **rebase 到 `origin/main`（`b4e0532`）之上**，工作区干净。
+- 早先那批产出（3 份 `fixes` + 3 份 `reports` + `report_template.md`）由提交 **`b127938`** 带入，
+  已经过 **PR #15 合入 `origin/main`**。
+- 本轮新增提交：**`6bd8d23`**（reka 重复性实验相关文档 + 报告改名）。
+- ⚠️ `b127938` 的提交信息是 **`sx`**（疑似误敲），内容没问题但信息无意义，**未改**（已推送过，改写需 force push）。
 
 ---
 
@@ -167,5 +176,5 @@ python3 -c "import json;d=json.load(open('repeat-r2/gpqa_50.json'));print({k:d.g
 | [[EVAL_SETTINGS]] | **逐模型评测参数总表**（温度/top_p/top_k/is-think） |
 | [[EVAL_INFRA]] | **评测环境**：eval 容器、context.yaml、离线数据集、跑评测命令 |
 | `fixes/*.md` | 逐模型修复日志（含**实测算子列表**专节） |
-| **`reports/*.md`** | **逐模型发布报告**（照 `workspace/report_template.md`，含发布字段） |
+| **`reports/*_report.md`** | **逐模型发布报告**（照 `workspace/report_template.md`，含发布字段） |
 | `_shared/KNOWLEDGE.md` | 跨厂商经验库（含本次新增的摩尔相关条目） |

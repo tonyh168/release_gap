@@ -32,15 +32,15 @@
 
 ## 📊 50 题筛查结果（2026-09-20 跑完，2026-09-21 出判定）
 
-> 逐模型的完整信息在 `reports/<模型名>.md`（含发布字段），过程记录在 `fixes/<模型名>.md`。
+> 逐模型的完整信息在 `reports/<模型名>_report.md`（含发布字段），过程记录在 `fixes/<模型名>.md`。
 > 判定命令：`accuracy_compare.py --v2 gpqa_50.json --nv-baseline <模型名> --metric gpqa_diamond`，
 > 产物 `verdict_50.json` 与 `gpqa_50.json` 同目录（`/datapool/flagrelease/release_run_logs/<模型名>/`）。
 
 | 模型 | 得分 | NV 基线 | 相对退化 | 判定 | runaway | 截断 | 报告 |
 |------|:----:|:-------:|:--------:|:----:|:-------:|:----:|------|
-| **Phi-4-reasoning-plus** | **58.0%**（29/50） | 46 | **−26.09%** | ✅ 退出码 0 | 0 | 无 | [[reports/Phi-4-reasoning-plus]] |
-| **LFM2.5-1.2B-Thinking** | **32.0%**（16/50） | 29.0 | **−10.34%** | ✅ 退出码 0 | 0 | 无 | [[reports/LFM2.5-1.2B-Thinking]] |
-| **Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled** | **78.0%**（39/50） | 75 | **−4.00%** | ✅ 退出码 0 | 1（idx 7） | 无 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
+| **Phi-4-reasoning-plus** | **58.0%**（29/50） | 46 | **−26.09%** | ✅ 退出码 0 | 0 | 无 | [[reports/Phi-4-reasoning-plus_report]] |
+| **LFM2.5-1.2B-Thinking** | **32.0%**（16/50） | 29.0 | **−10.34%** | ✅ 退出码 0 | 0 | 无 | [[reports/LFM2.5-1.2B-Thinking_report]] |
+| **Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled** | **78.0%**（39/50） | 75 | **−4.00%** | ✅ 退出码 0 | 1（idx 7） | 无 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
 | reka-flash-3 | 50.0%（25/50） | 59 / **53.54**※ | +15.25% / **−6.61%** | ❌ 退出码 1 | 0 | 无 | —（不达标，见 [[fixes/reka-flash-3]]） |
 
 > ※ **reka-flash-3 的基准按 metax 裁定改用 NV 原生实测 53.54**（表内 59 出自 NV 失败报告、口径不符）。
@@ -72,7 +72,7 @@
 即**该模型算子替换的覆盖面比白名单窄**，将来若靠增删算子调精度，改这两项是无效操作。
 
 > **「开启算子列表」一律以容器 `/tmp/flaggems_enable_oplist.txt` 的实测为准**（注意文件名是 `oplist` 连写），
-> **不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。逐模型实测名单见 `fixes/*.md` 与 `reports/*.md`。
+> **不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。逐模型实测名单见 `fixes/*.md` 与 `reports/*_report.md`。
 
 ## 🔬 reka-flash-3 重复性实验（进行中，2026-09-21）
 
@@ -148,7 +148,7 @@
 | AceReason-Nemotron-7B | mmlu 70.72 / math_500 95.2 | 📋 待开始 | 会话在服务启动前因 API 流式卡顿中断 |
 | Hermes-2-Pro-Llama-3-8B | gpqa_diamond 33 | 📋 待开始 | 权重下载命令超时 |
 | Ministral-3-14B-Instruct-2512 | gpqa_diamond 56 | 📋 待开始 | 容器准备未完成 |
-| Phi-4-reasoning-plus | gpqa_diamond 46 | ✅ 已达标 | **50 题筛查 58.0%（29/50），相对退化 −26.09%，退出码 0**。服务首跑即通（TP=1/GPU0/:8000，63s）。⚠ 198 题全量待跑；metax 建议的算子 A/B 未做（留白名单就已达标）。报告：[[reports/Phi-4-reasoning-plus]] |
+| Phi-4-reasoning-plus | gpqa_diamond 46 | ✅ 已达标 | **50 题筛查 58.0%（29/50），相对退化 −26.09%，退出码 0**。服务首跑即通（TP=1/GPU0/:8000，63s）。⚠ 198 题全量待跑；metax 建议的算子 A/B 未做（留白名单就已达标）。报告：[[reports/Phi-4-reasoning-plus_report]] |
 | Qwen2.5-7B-Instruct | gpqa_diamond 39.0 | 📋 待开始 | 会话连接中断 |
 | Qwen2.5-Coder-7B-Instruct | gpqa_diamond 27 | 📋 待开始 | 会话连接中断 |
 | aya-23-8B | gpqa_diamond 27 | 📋 待开始 | 容器准备未完成 |
@@ -174,7 +174,7 @@
 | DASD-4B-Thinking | gpqa_diamond 44.0 | 📋 待开始 | |
 | Dhanishtha-2.0-preview | mmlu 81.09 / math_500 68.6 | 📋 待开始 | |
 | GLM-4.7-Flash | gpqa_diamond 55 | 📋 待开始 | |
-| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | ✅ 已达标 | **50 题筛查 32.0%（16/50），相对退化 −10.34%，退出码 0** —— 与 **iluvatar 逐位一致**（同 32.0% vs 29.0）。服务首跑即通（35s），混合 SSM 无需特殊 attention-backend。⚠ 198 题全量待跑。报告：[[reports/LFM2.5-1.2B-Thinking]] |
+| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | ✅ 已达标 | **50 题筛查 32.0%（16/50），相对退化 −10.34%，退出码 0** —— 与 **iluvatar 逐位一致**（同 32.0% vs 29.0）。服务首跑即通（35s），混合 SSM 无需特殊 attention-backend。⚠ 198 题全量待跑。报告：[[reports/LFM2.5-1.2B-Thinking_report]] |
 | Light-R1-14B-DS | mmlu 85.17 / math_500 93.2 | 📋 待开始 | |
 | Qwen3-4B-SafeRL | mmlu 81.39 / math_500 94.8 | 📋 待开始 | 另有 `float4_e2m1fn_x2` 崩溃记录 |
 | ZR1-1.5B | mmlu 50.54 / math_500 89.4 | 📋 待开始 | |
@@ -210,7 +210,7 @@
 | DeepSeek-R1-Distill-Qwen-32B | gpqa_diamond 37 | 📋 待开始 | |
 | Phi-3-vision-128k-instruct | gpqa_diamond 25.0 | 📋 待开始 | 多模态 VLM，需图像输入支持 |
 | Qwen3-30B-A3B-Instruct-2507 | gpqa_diamond 62 | 📋 待开始 | |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | ✅ 已达标 | **50 题筛查 78.0%（39/50），相对退化 −4.00%，退出码 0**（1 个 runaway，idx 7）。**关键：显式 `--max-model-len 32768`**（模型默认 256K，KV 需 64GB 装不下）。**iluvatar 同模型受 8192 上下文限制只拿 70.0% 不达标，摩尔 4 倍上下文直接翻盘（+8pt）**。⚠ 多模态只测了文本路径；198 题全量待跑。报告：[[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | ✅ 已达标 | **50 题筛查 78.0%（39/50），相对退化 −4.00%，退出码 0**（1 个 runaway，idx 7）。**关键：显式 `--max-model-len 32768`**（模型默认 256K，KV 需 64GB 装不下）。**iluvatar 同模型受 8192 上下文限制只拿 70.0% 不达标，摩尔 4 倍上下文直接翻盘（+8pt）**。⚠ 多模态只测了文本路径；198 题全量待跑。报告：[[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
 | Qwen3.5-27B-Derestricted | mmlu 89.98 / math_500 84.8 | 📋 待开始 | |
 | Turkish-Gemma-9b-v0.1 | mmlu 75.19 / math_500 53.6 | 📋 待开始 | 服务启动未通过 |
 | gemma-2-27b-it | gpqa_diamond 48 | 📋 待开始 | |
