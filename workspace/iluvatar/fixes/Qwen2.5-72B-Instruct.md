@@ -110,13 +110,20 @@ modelscope download --model Qwen/Qwen2.5-72B-Instruct \
 
 ## Step 3：起 vLLM 服务（iter1）
 
+> **执行方式**：全过程由宿主机后台 driver 脚本 `/root/qwen25-72b-driver.sh` 无人值守串起来
+> （等下载 → 起服务 → 等就绪 → 冒烟 → 评测 → verdict），日志落在
+> `/mnt/share/models/release_run_logs/Qwen2.5-72B-Instruct/driver.log`。
+> **服务用「graph 优先、失败回退 eager」两段式**（见下方「为什么 graph 优先」）。
+
+### 3a. graph 模式（首选）
+
 ```bash
 docker exec -d flagrelease-fix-qwen2.5-72b-instruct bash -c "
 export GEMS_VENDOR=iluvatar
 export VLLM_PLUGINS=fl
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable
+export VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable,mm,addmm,broadcast_to
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=72000
 export VLLM_RPC_TIMEOUT=72000000
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
@@ -124,13 +131,21 @@ model_name=Qwen2.5-72B-Instruct
 mkdir -p /models/release_run_logs/\${model_name}
 nohup vllm serve /models/flagrelease/fixes_models/\${model_name} \
   --served-model-name \${model_name} --dtype bfloat16 \
-  --tensor-parallel-size 8 --gpu-memory-utilization 0.9 \
+  --tensor-parallel-size 8 --gpu-memory-utilization 0.85 \
   --max-model-len 32768 \
+  --max-num-seqs 16 --cudagraph-capture-sizes 16 \
   --port 8015 --attention-backend TRITON_ATTN \
-  --enforce-eager --trust-remote-code \
-  > /models/release_run_logs/\${model_name}/serve_iter1.log 2>&1 &
-echo \$! > /models/release_run_logs/\${model_name}/serve_iter1.pid
+  --trust-remote-code \
+  > /models/release_run_logs/\${model_name}/serve_graph.log 2>&1 &
+echo \$! > /models/release_run_logs/\${model_name}/serve_graph.pid
 "
+```
+
+### 3b. eager 回退（graph 30 分钟未就绪时自动切换）
+
+```bash
+# 同上，但：--gpu-memory-utilization 0.9，去掉 --max-num-seqs/--cudagraph-capture-sizes，
+# 黑名单退回 sort,sort_stable，并加回 --enforce-eager
 ```
 
 **iter1 配置取舍说明：**
@@ -140,12 +155,19 @@ echo \$! > /models/release_run_logs/\${model_name}/serve_iter1.pid
   ② standard 分支下 `auto_max_tokens = clamp(max_model_len-8192, 4096, 32768) = 24576`，
   对 GPQA 单题输出（通常 <2K token）绰绰有余。**不套用 Qwen3.5-27B 的 65536**：那是为了撑 thinking 的 20000 上限，
   Qwen2.5 是 standard 分支用不到。
-- **`--enforce-eager` 暂留**：STATUS「新发现 0」明确 `--enforce-eager` 是性能杀手（Fathom/MiroThinker 去掉后提速 5–31×）。
-  但那是**排查吞吐问题**时的第一优先级；本模型 iter1 的首要目标是**先把分数基线打出来**，
-  eager 是已知能起服务的稳定路径。**若 iter1 分数达标且耗时不可接受，再切 graph 模式做迭代**（见「迭代记录」）。
-- **黑名单只用 `sort,sort_stable`**：Qwen3.5-27B 额外加了 `mm,addmm`，但那是**为了精度**（它的具体诉求）；
-  TinyR1 iter2 已证明 `mm,addmm` 黑名单**无效**。故本模型 iter1 从最小黑名单起步，
-  只在真正遇到崩溃（`broadcast_to` 等 graph 捕获报错）或有证据的精度诉求时才加。
+- **⚠️ 为什么不用 `--enforce-eager`（与最初判断相反，最终改为 graph 优先）**：
+  STATUS「新发现 0」已确认 `--enforce-eager` 同时禁用 torch.compile 与 CUDAGraph，
+  在 Fathom/MiroThinker 上分别造成 **5.4× / 8.7×** 的吞吐损失。
+  本模型是 **72B dense**，计算量约为 14B 的 5 倍，eager 下 50 题 GPQA 的墙钟时间会不可接受；
+  而本模型**没有任何历史崩溃记录**（无失败报告），没有必须 eager 的理由。
+  故改为 **graph 优先、eager 兜底**——用 ~30 分钟的最坏回退代价，换掉可能数小时的评测时间。
+- **黑名单在 graph 下扩到 `sort,sort_stable,mm,addmm,broadcast_to`**：
+  `broadcast_to` 是 Fathom 实测的**图捕获必崩算子**（见其 fix log「graph 模式启动」）；
+  `mm,addmm` 一并挡住是防止 GEMM 类 kernel 在图捕获下编译崩（MetaX 同款坑，见 KNOWLEDGE 一）。
+  eager 回退路径**退回最小黑名单 `sort,sort_stable`** —— 保住已知能起的配置，不引入未验证变量。
+- **`--gpu-memory-utilization` graph 用 0.85、eager 用 0.9**：Fathom 实测残留显存未清时 0.9 会报
+  `Free memory ... less than desired GPU memory utilization`，graph 模式额外要留 CUDAGraph 的内存池，
+  0.85 更稳。权重占 8 卡总显存的 57%（145/256 GB），两个值都不紧张。
 
 ---
 
