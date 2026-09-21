@@ -206,7 +206,72 @@ python3 accuracy_compare.py \
 | iter | 配置 | GPQA | vs 56.0 | runaway / 截断 | 判定 |
 |:----:|------|:----:|:-------:|:---:|:---:|
 | — | **v2 driver（作废）** | — | — | — | ❌ **空跑失败，非服务问题**：脚本 bug 导致 vLLM 从未启动，见下节 |
-| 1 | v3 driver：graph 优先（失败回退 eager）/ TP=8 / TRITON_ATTN / mlen=32768 / **采样取 generation_config.json** | *(待出)* | | | |
+| — | **v3 driver（服务部分成功）** | — | — | — | ✅ **`SERVE_MODE=graph`，未回退 eager**（22:03:08）。但评测阶段又栽了 3 个脚本 bug，见「v3 评测阶段」节 |
+| 1 | v4 driver：**沿用 v3 起的 graph 服务**（不重启）/ TP=8 / TRITON_ATTN / mlen=32768 / **采样取 generation_config.json** | *(进行中)* | | | |
+
+---
+
+## ✅ 重要结论：graph 模式启动成功，未回退 eager（2026-09-21 22:03:08）
+
+```
+[22:03:08] ✅ graph 模式启动成功
+[22:03:08] SERVE_MODE=graph
+```
+
+这是 v2 那一轮**没能回答**的问题。证据（不是"没报错"而是图捕获真的发生了）：
+
+```
+(Worker_TP0) torch.compile took 36.65 s in total
+(Worker_TP0) Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|████| 1/1 [00:19]
+(Worker_TP0) Capturing CUDA graphs (decode, FULL):                     100%|████| 1/1 [00:02]
+(APIServer)  Application startup complete.
+```
+
+**全程没有 `Enforce eager set, disabling torch.compile and CUDAGraphs`** → 确认是真 graph。
+启动耗时 21:57:58 → 22:03:08 ≈ **5 分 10 秒**（加载 37 分片 ~2min + compile 37s + 图捕获 22s）。
+
+| 指标 | 值 |
+|------|----|
+| GPU KV cache size | **222,352 tokens** |
+| 32,768 token/请求下最大并发 | **6.79×** |
+
+> ⚠️ **待观察**：`--cudagraph-capture-sizes 16` 只捕获了 **1/1** 个尺寸（预期 1,2,4,8,16 一组）。
+> 不影响跑通；若并发 >1 时吞吐不理想，这是第一个该查的点。
+> 另：单请求实测只跑到 **1.93 tok/s**（33 token / 17.1s，含 prefill，短输出下这个数被 prefill 主导，不代表解码速率）。
+> **评测期间不并发做性能测试**（会抢 GPU 污染精度），性能结论等评测跑完再单独测。
+
+**结论价值**：72B dense 在 graph 模式 + 扩黑名单（`sort,sort_stable,mm,addmm,broadcast_to`）下
+**能顺利图捕获并按 5 分钟级启动** —— 说明 Fathom 那套 graph 配置**对更大的 dense 模型同样成立**，
+不因模型变大而失效。
+
+---
+
+## ⚠️ v3 driver 评测阶段又暴露 3 个脚本 bug（2026-09-21 22:03~22:10）
+
+服务起来了，但评测阶段败了。三个 bug 同源：**失败被伪装成"还在进行中"**。
+
+| # | 现象 | 根因 |
+|:-:|------|------|
+| B1 | 评测算死了，轮询却一直以为在跑（4a 本会空等 40min、4b 空等 12h） | `kill -0 $EPID` 对**僵尸进程**仍返回 0；实测 `1852 Z [python3] <defunct> PPID=1` |
+| B2 | "单请求吞吐实测"永远不打印 | `docker exec` 不带 `-i` → **heredoc 的 stdin 被静默吞掉**，python 读空 stdin 退出 |
+| B3 | 评测 1 秒内退出：`[ERROR] 未知数据集: ['None']` | 部署版 `_split_datasets()` 缺 None 守卫，`str(None)="None"` 被当合法数据集名 → `or gpqa_diamond` 兜底永不触发 |
+
+**B3 的影响面最大**：**SOP 第 4 节的评测命令模板本身就没写 `--dataset`**，照抄 SOP 就会踩。
+
+**修复**：
+
+1. `fast_gpqa.py` 补回 None 守卫（NFS 规范副本 + `eval-scope:/workspace/eval_scripts/` + 仓库副本）；
+   driver 侧同时**显式传 `--dataset gpqa_diamond`**（双保险）
+2. 判活改 `pgrep -f "[f]ast_gpqa"`，并**用"输出文件是否写出"区分"跑完"与"崩了"**
+3. 吞吐实测改 `docker exec -i`
+4. 新增「启动宽限 60s」+「进程消失即判定结果」，任何失败都在 1 分钟内暴露，不再空等
+
+> 📌 **附带发现**：评测日志重定向到文件时 python 是**块缓冲**，运行中 `tail` 看不到内容
+> （这也是"进度看起来不动"的假象之一）。要实时进度得给 `python3` 加 `-u`。
+> v4 未加（避免中途改变已起的流程），v4 靠"输出文件是否写出"判完成，不依赖日志。
+
+**v4 已重启**（22:11:48，`PPID=1` 脱离验证通过），**沿用 v3 起的 graph 服务、不重启服务**
+（省掉 5 分钟且保留 graph 结论），从冒烟 + 4a 小样本接着跑。
 
 ---
 

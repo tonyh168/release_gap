@@ -157,3 +157,45 @@
   用 `pgrep` 确认进程、`ls -la` 确认日志文件存在且在增长，再谈是不是模型太大/算子有问题。
   这两条一起出现时，浪费的不是几分钟，而是两轮 30 分钟 + 一次人工介入。
 
+### 七之二、同一批 driver 在**评测阶段**暴露的三个 bug（2026-09-21 当晚补）
+
+> 服务起来后（`SERVE_MODE=graph`），driver 进到评测阶段又栽了三个跟上面同源的坑。
+
+- 🔴 **B1：`kill -0` 判活测不出"评测算死了"，只会空等满超时。**
+  **现象**：评测进程早已退出，轮询却一直认为它在跑（4a 本会空等 40 分钟、4b 空等 12 小时）。
+  **根因**：`docker exec eval-scope bash -c "kill -0 $EPID"` 对**僵尸进程**（`STAT=Z`）**仍返回 0**。
+  容器里 `python3` 秒退后没人回收 → 变僵尸（实测 `1852 Z [python3] <defunct> PPID=1`）→ 检查恒为真。
+  **处置**：① 判活改用 `pgrep -f "[f]ast_gpqa"`（按模式匹配真实进程，不看 PID）；
+  ② **并用"输出文件是否写出"区分"正常跑完"与"中途崩了"** —— 进程消失后若结果 JSON 不存在即为失败。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- 🔴 **B2：`docker exec` 不带 `-i` 会**静默吞掉** heredoc 的 stdin。**
+  **现象**：driver 里那段"单请求吞吐实测"永远不打印结果，日志里只剩一行分隔标题。
+  **根因**：`docker exec` 默认不转发 stdin，`docker exec CT python3 - <<'PYEOF'` 的脚本**根本没传进去**，
+  python 读空 stdin 直接退出，**无任何报错**（之前还被 `|| true` 掩盖）。
+  **处置**：用 `docker exec -i`。实测：带 `-i` 打印 `HEREDOC_OK`，不带则一行输出都没有。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- 🔴 **B3：`fast_gpqa.py` 不传 `--dataset` 时**评测秒退**（脚本本体 bug，已修）。**
+  **现象**：`[ERROR] 未知数据集: ['None']（可选: ['gpqa_diamond', 'mmlu', 'math_500', 'mm_star']）`，
+  进程 1 秒内退出，什么都没产出。
+  **根因**：部署版 `_split_datasets()` 缺 `if raw is None: return []`：
+  ```python
+  parts = raw if isinstance(raw, list) else [raw]   # raw=None → [None]
+  return [p.strip() for part in parts for p in str(part).split(',') if p.strip()]  # → ['None']
+  ```
+  `str(None) == "None"` 恰好非空，于是返回 `['None']`（**真值**）→ 后面
+  `_split_datasets(args.dataset) or _split_datasets(config.get('dataset', 'gpqa_diamond'))`
+  的 `gpqa_diamond` 兜底**永远不触发** → 数据集名非法 → `sys.exit(1)`。
+  **⚠️ 影响面很大**：**SOP 第 4 节的评测命令模板本身就没写 `--dataset`**，照抄就会踩。
+  **处置**：① 脚本补回 None 守卫（NFS 规范副本 + `eval-scope:/workspace/eval_scripts/` 都已修）；
+  ② driver/手工命令一律**显式写 `--dataset gpqa_diamond`**（双保险，不依赖兜底逻辑）。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **这一节的通用教训（比上面三条更值钱）**：无人值守脚本里，**每一个"等待/判断"都必须有
+  "失败了会怎样"的快速路径**。三条 bug 的共同形状是——
+  **失败被伪装成"还在进行中"**（重定向失败=静默不执行、自匹配=永远活着、僵尸=永远活着、
+  空 stdin=静默无输出、`['None']`=静默走错分支）。
+  对策：凡是等待，都要同时校验**一个独立的、能证伪的正向证据**
+  （进程存在 + 日志非空 + 输出文件写出），而不是只信单一返回值。
+
