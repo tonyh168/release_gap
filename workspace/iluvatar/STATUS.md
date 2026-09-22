@@ -393,7 +393,7 @@ v3 评测阶段的「`kill -0` 测不出僵尸进程」+「`docker exec` 缺 `-i
 | LFM2.5-1.2B-Instruct | 1 | 8001 | gpqa_diamond | TRITON_ATTN | ✅ 完成（已停） |
 | gemma-1.1-7b-it | 2 | 8002 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（22.0%，不达标）（已停） |
 | OpenThinker-7B | 3 | 8003 | mmlu + math_500 | TRITON_ATTN | ✅ 完成（已停） |
-| AgentCPM-Report | 4 | 8004 | gpqa_diamond | TRITON_ATTN | ✅ 完成（iter2 49.49%，达标）（已停） |
+| AgentCPM-Report | 0 | 8002 | gpqa_diamond | TRITON_ATTN | ✅ 完成（iter2 49.49%，达标）（已停） |
 | Marco-o1 | 5 | 8005 | gpqa_diamond | TRITON_ATTN | ✅ 完成（已停） |
 | NeuralDaredevil-8B-abliterated | 6 | 8006 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（iter1 30.0% / iter2 22.0%）（已停） |
 | Phi-3-medium-128k-instruct | 0 | 8009 | gpqa_diamond | TRITON_ATTN | ⏭️ 跳过（iter3 24.0%，三次相同）（已停） |

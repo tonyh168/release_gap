@@ -159,6 +159,27 @@ export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
 /Users/baai3333/Desktop/flagos/auto-day0/scripts/evalscope_guarded_gpqa.py
 ```
 
+完整 guarded evaluator 代码已嵌入 [file_fixes/SuperNova-Medius.md](file_fixes/SuperNova-Medius.md)，后续复现不再依赖仓库外的 `auto-day0` 路径。
+
+脚本的可复现修改点（本机现存源码只读核验，非对容器内旧版脚本的差异推断）：
+
+```python
+# configured_task: 每轮固定同一工作目录，不覆盖已有评测；续跑复用缓存。
+config['work_dir'] = str(work_dir)
+config['no_timestamp'] = True
+config['use_cache'] = str(work_dir) if resume else None
+config['generation_config']['max_tokens'] = max_tokens  # 本轮传 4096
+
+# invalid_generations: 逐条读取 predictions/<model_id>/gpqa_diamond_default.jsonl。
+result = row['model_output']
+if result.get('error') or not result.get('choices'):
+    errors.append(row['index'])
+elif result['choices'][0].get('stop_reason') != 'stop':
+    truncated.append((row['index'], result['choices'][0].get('stop_reason')))
+```
+
+每次重试将 `errors` 和 `truncated` 的索引取并集；对 predictions、reviews 两份 JSONL 分别先用 `shutil.copy2` 备份为 `.jsonl.before-retry-<轮次>`，仅过滤这些索引，写入 `.rewrite-tmp` 后原子替换，随后设 `retry_config['use_cache'] = str(work_dir)` 调用 `evalscope.run.run_task`，最多重试 `--retry-invalid` 次（默认 2）。首次运行若工作目录已存在则拒绝覆盖，续跑必须显式 `--resume`。最后 `audit` 强制 predictions 和 reviews 均为 `expected=198` 条，索引唯一且恰好是 `0..197`；任何 API error、缺失 choices 或非 `stop` 的终止原因均抛错而非计为普通错题，全部通过才从 reviews 的 `sample_score.score.value.acc` 求原始准确率。复现时需保持 `model_id` 与 EvalScope 缓存目录一致，且输入任务配置的 `datasets` 必须恰好为 `['gpqa_diamond']`。
+
 ### 两遍全量结果
 
 两遍评测均使用当前原始镜像、TP2、native `TRITON_ATTN`、`VLLM_FL_OOT_ENABLED=0` 和 prefix cache，期间没有重启模型服务。
@@ -220,4 +241,3 @@ Run 2 结果目录：
 3. **评测层**：固定数据集、提示词、并发和生成参数，检测截断/runaway/API error，并对异常索引做可恢复的局部重试。
 
 评测自动化不得把 `max_tokens` 截断结果当作普通错误答案，也不得因为某个固定题号曾经 runaway 就永久跳过该题。应基于响应状态识别异常，保留原始证据，只重试异常样本，最后校验题目索引完整性后再计算精度。
-
