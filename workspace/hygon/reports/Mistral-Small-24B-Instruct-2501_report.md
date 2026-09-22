@@ -151,19 +151,20 @@ python3 fast_gpqa.py \
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 54
 # SCORE_FLAGOS: 52.0
-# CONTAINER_DEVS: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size=64g
+# CONTAINER_DEVS: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size=64g -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
 ```
 
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
+  -v /opt/hyhal:/opt/hyhal:ro \
   --name Mistral-Small-24B-Instruct-2501_flagos \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
@@ -177,7 +178,8 @@ export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/release_run_logs/Mistral-Small-24B-Instruct-2501/triton_cache_whitelist_genconfig_20260917-150118
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-Small-24B-Instruct-2501
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 vllm serve /models/Mistral-Small-24B-Instruct-2501 \
   --host 0.0.0.0 \

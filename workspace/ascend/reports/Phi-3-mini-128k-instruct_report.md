@@ -43,17 +43,30 @@
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 33
 # SCORE_FLAGOS: 40
-# CONTAINER_DEVS: --privileged --shm-size=64g -v /public-flash/models:/models -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /etc/ascend_install.info:/etc/ascend_install.info
+# CONTAINER_DEVS: --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g -e ASCEND_VISIBLE_DEVICES=10,11 -e ASCEND_RT_VISIBLE_DEVICES=10,11 -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 -v /public-flash/models:/models -v /data/flagos-workspace/microsoft/Phi-3-mini-128k-instruct:/flagos-workspace -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /usr/local/sbin:/usr/local/sbin -v /etc/ascend_install.info:/etc/ascend_install.info
 ```
 
 ### 二、容器创建（宿主机执行）
 
+节点实际部署依赖 Docker 的默认 Ascend runtime；下列命令显式写出 `--runtime=ascend`，行为等价且可跨节点复现。
+
 ```bash
-docker run --init -it --net=host --ipc=host --privileged --shm-size=64g \
-  -v /public-flash/models:/models -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /etc/ascend_install.info:/etc/ascend_install.info \
-  --name flagos-ascend-phi-3-mini-128k-instruct \
+docker run -d --restart unless-stopped --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g \
+  -e ASCEND_VISIBLE_DEVICES=10,11 \
+  -e ASCEND_RT_VISIBLE_DEVICES=10,11 \
+  -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 \
+  -v /public-flash/models:/models \
+  -v /data/flagos-workspace/microsoft/Phi-3-mini-128k-instruct:/flagos-workspace \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+  -v /usr/local/dcmi:/usr/local/dcmi \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/sbin:/usr/local/sbin \
+  -v /etc/ascend_install.info:/etc/ascend_install.info \
+  --name Phi-3-mini-128k-instruct_flagos \
   harbor.baai.ac.cn/flagrelease-public/flagrelease_ascend_vllm020plugin_base:no_vllm_ascend \
-  /bin/bash
+  sleep infinity
+
+docker exec -it Phi-3-mini-128k-instruct_flagos bash
 ```
 
 ### 三、启动服务（容器内执行）

@@ -88,6 +88,39 @@ export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 
 逻辑设备 12/13 属于同一张空闲板卡，启动前显存分别约有 `60.88 GiB` 和 `61.13 GiB` 可用。
 
+关键挂载：
+
+```text
+/public-flash/models -> /models
+/data/flagos-workspace/microsoft/Phi-3-vision-128k-instruct -> /flagos-workspace
+/usr/local/Ascend/driver -> /usr/local/Ascend/driver
+/usr/local/dcmi -> /usr/local/dcmi
+/usr/local/bin/npu-smi -> /usr/local/bin/npu-smi
+/usr/local/sbin -> /usr/local/sbin
+/etc/ascend_install.info -> /etc/ascend_install.info
+```
+
+按实际运行配置规范化后的可复现命令（原节点默认 runtime 即为 `ascend`，这里显式写出）：
+
+```bash
+docker run -d --restart unless-stopped \
+  --runtime=ascend --network=host --ipc=host \
+  --privileged --security-opt=label=disable --shm-size=64g \
+  -e ASCEND_VISIBLE_DEVICES=12,13 \
+  -e ASCEND_RT_VISIBLE_DEVICES=12,13 \
+  -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 \
+  -v /public-flash/models:/models \
+  -v /data/flagos-workspace/microsoft/Phi-3-vision-128k-instruct:/flagos-workspace \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+  -v /usr/local/dcmi:/usr/local/dcmi \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/sbin:/usr/local/sbin \
+  -v /etc/ascend_install.info:/etc/ascend_install.info \
+  --name Phi-3-vision-128k-instruct_flagos \
+  harbor.baai.ac.cn/flagrelease-public/flagrelease_ascend_vllm020plugin_base:no_vllm_ascend \
+  sleep infinity
+```
+
 ## Step 2：启动 vLLM 服务
 
 实际命令：
@@ -361,6 +394,41 @@ Phi-3-vision-128k-instruct:
 - Runaway：6 题，题号 `8, 24, 26, 29, 33, 42`
 - MMStar：按用户要求未执行
 - 性能验收：本次未执行
+
+## VLLM_PLUGINS=fl 复测（第二轮）
+
+为验证显式设置插件环境变量的影响，使用相同模型、镜像、TP=2、BF16、131072 上下文和 GPQA 50 题口径重新启动，并在服务启动块增加：
+
+```bash
+export VLLM_PLUGINS=fl
+```
+
+本轮因逻辑设备 12/13 当时被其他服务占用，实际使用空闲逻辑设备 `6,7`；这是与首轮不同的外部变量，不能把分数变化全部归因于 `VLLM_PLUGINS`。
+
+| 项目 | 首轮 | `VLLM_PLUGINS=fl` 复测 |
+|---|---:|---:|
+| 逻辑设备 | `12,13` | `6,7` |
+| GPQA | `24.00%` | `20.00%` |
+| NV 基线 | `25.00%` | `25.00%` |
+| 相对退化 | `4.00%` | `20.00%` |
+| Runaway | `6/50` | `7/50` |
+| Parser mismatch | `0` | `0` |
+| accuracy_compare | 0（通过） | 1（不通过） |
+
+复测结果文件：
+
+```text
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/gpqa50.json
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/verdict.json
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/eval.log
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/serve.log
+```
+
+复测正确题号（1 基）：`1, 5, 11, 13, 14, 17, 30, 32, 34, 37`；失败题号：`2, 3, 4, 6, 7, 8, 9, 10, 12, 15, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 33, 35, 36, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50`。
+
+Runaway 题号（1 基）：`2, 8, 24, 26, 29, 33, 42`。
+
+结论：复测不通过；首轮日志已经显示该镜像会自动激活 `fl` 平台插件，因此不能将本轮 20% 单独解释为显式环境变量造成。发布字段仍保留首轮通过配置，不将失败复测写成发布配置。
 
 ## 可复用规则
 

@@ -69,11 +69,11 @@ EvalScope 工作目录：outputs/gpqa_diamond/20260920_102140
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --security-opt label=disable --group-add video --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro \
   --name flagos-hygon-deepseek-r1-distill-qwen-32b-japanese \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
@@ -91,7 +91,8 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/DeepSeek-R1-Distill-Qwen-32B-Japanese
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/DeepSeek-R1-Distill-Qwen-32B-Japanese
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=attention_backend
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
 export VLLM_FL_OOT_ENABLED=0

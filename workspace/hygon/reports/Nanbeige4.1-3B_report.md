@@ -37,8 +37,8 @@ shm-size: 64 GiB
 1. 使用统一 Hygon 新镜像；
 2. 使用 `HIP_VISIBLE_DEVICES=7`，不设置 `ROCR_VISIBLE_DEVICES`；
 3. 固定 `TRITON_ATTN`、BF16、TP=1 和 eager 模式；
-4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`（失败尝试：不设置时同批服务触发 Triton/FlagGems 编译问题）；
-5. 使用独立 Triton 缓存与算子记录文件（`enabled_ops_retry-clang18-20260917.txt`）；
+4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`（失败尝试：不设置时同批服务触发 Triton/FlagGems 编译问题）；
+5. 使用独立 Triton 缓存目录；
 6. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond 50 题；
 7. 使用 `accuracy_compare.py` 与 NV 记录值比较，并保留答案抽取审计结果。
 
@@ -46,7 +46,6 @@ shm-size: 64 GiB
 
 ```text
 /public-flash/models/release_run_logs/Nanbeige4.1-3B/serve_retry-clang18-20260917.log
-/public-flash/models/release_run_logs/Nanbeige4.1-3B/enabled_ops_retry-clang18-20260917.txt
 ```
 
 评测配置与命令：
@@ -156,29 +155,29 @@ python3 fast_gpqa.py \
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video --group-add render \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video --group-add render \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
   -v /opt/hyhal:/opt/hyhal:ro \
   --name flagrelease-nanbeige4p1-3b \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/release_run_logs/triton_cache/Nanbeige4.1-3B
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/release_run_logs/Nanbeige4.1-3B/enabled_ops_retry-clang18-20260917.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Nanbeige4.1-3B
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 vllm serve /models/flagrelease/fixes_models/Nanbeige4.1-3B \
   --served-model-name Nanbeige4.1-3B \
   --dtype bfloat16 \

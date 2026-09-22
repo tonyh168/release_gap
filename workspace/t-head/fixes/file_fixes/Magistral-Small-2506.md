@@ -1,5 +1,7 @@
 # Magistral-Small-2506 修改文件说明
 
+> 本文件只说明程序文件修改。推理容器必须绑定 `/dev:/dev`、`/usr/local/PPU_SDK:/usr/local/PPU_SDK`、`/mnt/workspace/models:/models`；完整、已核验的 `docker run`、`docker exec` 和健康检查命令见 [适配记录](../Magistral-Small-2506.md) 与 [发布报告](../../reports/Magistral-Small-2506_report.md)。评测容器只调用 API，因此仅绑定 `/mnt/workspace/models:/models`。
+
 ## 来源与用途
 
 本次没有修改模型权重、vLLM、`vllm-plugin-FL` 或 FlagGems 源码。唯一持久化修改的程序文件是 GPQA 评测脚本：

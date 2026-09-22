@@ -48,11 +48,11 @@ API 客户端需显式发送采样参数并记录最终生效值。
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --security-opt label=disable --group-add video --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro \
   --name flagos-hygon-minicpm4-8b \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
@@ -69,7 +69,8 @@ export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/MiniCPM4-8B
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/MiniCPM4-8B
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,broadcast_to,copy_,cos,cumsum,cumsum_out,expand,full,index,le,linear,lt_scalar,masked_fill_,mm_out,ones,rand_like,reciprocal,rsub_scalar,scatter_,sin,softmax,softmax_out,sub,sum_dim,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 /usr/local/bin/vllm serve /models/MiniCPM4-8B \
   --served-model-name MiniCPM4-8B \

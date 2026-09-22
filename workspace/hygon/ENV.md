@@ -9,7 +9,7 @@
 | GPU | 海光 HCU / DCU（DTK/ROCm 生态），单机多卡 | 参考模型 XingChen4 用 TP=4 |
 | 宿主机（ssh 免密） | `hygon-30` `hygon-31` `hygon-32` `hygon-33` | |
 | 设备节点 | `/dev/kfd`、`/dev/dri` | 启容器需 `--security-opt seccomp=unconfined --group-add video`（见模板 01） |
-| DTK | `/opt/dtk-26.04-DCC2602-0317` | **起服务前必须** `source .../env.sh` |
+| DTK | 容器内优先使用 `/opt/dtk` 稳定入口 | **起服务前必须** `source /opt/dtk/env.sh`；若镜像没有该入口，先按实际镜像确认路径 |
 | 驱动自检 | `hy-smi` | |
 | 共享存储 | 宿主机模型盘 → 容器 `/models`（如 `/models/XingChen4-29B-A4B-0907`） | |
 

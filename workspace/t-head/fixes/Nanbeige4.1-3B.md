@@ -89,6 +89,29 @@ mounts:
   /usr/local/PPU_SDK    -> /usr/local/PPU_SDK
 ```
 
+该配置已经通过远端 `docker inspect` 复核。同名容器不存在时，等价创建命令为：
+
+```bash
+set -euo pipefail
+test -d /dev
+test -d /usr/local/PPU_SDK
+test -d /mnt/workspace/models/Nanbeige4.1-3B
+
+docker run -d \
+  --name flagrelease_thead_nanbeige4p1_3b_20260917 \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  sleep infinity
+```
+
+评测容器只挂载 `/mnt/workspace/models:/models`；由于不执行 PPU 推理，它没有 `/dev` 和 SDK 挂载。
+
 实际 vLLM 命令：
 
 ```bash
@@ -116,12 +139,12 @@ export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
 export FLAGGEMS_DB_URL=sqlite:///:memory:
 
-export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,cat,copy_,cos,exponential_,fill_scalar_,index,lt_scalar,mul,pow_scalar,rand_like,reciprocal,scatter_,sin,softmax,softmax_out,sub,true_divide,true_divide_,where_self,where_self_out,zero_,zeros,attention_backend,rms_norm,silu_and_mul,rotary_embedding
+export VLLM_FL_FLAGOS_WHITELIST=attention_backend,rms_norm,silu_and_mul,rotary_embedding
 
-export VLLM_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-gpu14
-export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-gpu14/torchinductor
-export TRITON_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-gpu14/triton
-export VLLM_FL_TRITON_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-gpu14/triton
+export VLLM_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-min4-gpu14
+export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-min4-gpu14/torchinductor
+export TRITON_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-min4-gpu14/triton
+export VLLM_FL_TRITON_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-min4-gpu14/triton
 
 export PPU_HOME=/usr/local/PPU_SDK
 export CUDA_HOME=/usr/local/PPU_SDK/CUDA_SDK
@@ -131,7 +154,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 服务日志：
 
 ```text
-/mnt/workspace/models/_serve_logs/Nanbeige4.1-3B-20260917-gpu14-port18087.log
+/mnt/workspace/models/_serve_logs/Nanbeige4.1-3B-20260918-min4-gpu14-port18087.log
 ```
 
 健康检查：
@@ -284,7 +307,7 @@ NV 对比：
 /models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py
 ```
 
-仓库留存修复版的完整脚本已嵌入 [file_fixes/Nanbeige4.1-3B.md](file_fixes/Nanbeige4.1-3B.md)。代码块可完整保存为 `fast_gpqa.py`；由于当前堡垒机未能定位 T-Head 资产，尚未证明它与远端运行文件逐字节一致，复现时应先与远端 `.bak` 做 diff。
+仓库留存修复版的完整脚本已嵌入 [file_fixes/Nanbeige4.1-3B.md](file_fixes/Nanbeige4.1-3B.md)。现已定位远端脚本并完成 SHA-256 核对；仓库快照、修复前备份、后续 Magistral 修改前备份及当前远端脚本的哈希均不同，因此该代码块只能作为逻辑留档，不能宣称与本轮运行文件逐字节一致。具体哈希见修改文件说明，复现时必须先做 diff。
 
 修改函数：
 
@@ -303,7 +326,7 @@ _extract_explicit_mcq_answer
 /models/_eval_scripts/release_gap_eval_20260917/flagrelease_eval_methods/fast_gpqa.py.bak_20260918_nanbeige_extract
 ```
 
-仓库中留存的修复版实现见 [fast_gpqa.py](fast_gpqa.py) 的 `_extract_explicit_mcq_answer`。复现时替换该函数的具体逻辑如下（此为仓库版本；远端原脚本与 `.bak` 尚未完成字节级比对）：
+仓库中留存的修复版实现见 [fast_gpqa.py](fast_gpqa.py) 的 `_extract_explicit_mcq_answer`。复现时替换该函数的具体逻辑如下（此为仓库逻辑快照；已确认它与现存远端脚本及两份备份都不是逐字节相同文件）：
 
 ```python
 def _extract_explicit_mcq_answer(text: str) -> Optional[str]:

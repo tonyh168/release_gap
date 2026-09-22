@@ -16,7 +16,7 @@
   ```
   按空闲卡数和模型大小定 TP（见第 3 节 TP 选卡原则）。
 - 镜像：`harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4`（vLLM 0.24.0，py310 / torch2.10 / dtk26.04 / flagtree3.6）。
-- DTK：`/opt/dtk-26.04-DCC2602-0317`，**起服务前必须** `source /opt/dtk-26.04-DCC2602-0317/env.sh`。
+- DTK：容器内稳定入口为 `/opt/dtk`，**起服务前必须** `source /opt/dtk/env.sh`。不同镜像内部若没有该稳定入口，应先在容器内确认实际DTK路径，不能直接照抄宿主机版本目录。
 - 共享存储：宿主机模型盘挂到容器 `/models`（权重目录如 `/models/XingChen4-29B-A4B-0907`）。
 
 ## 1. 起容器
@@ -34,7 +34,7 @@ docker run -itd --name flagrelease-fix-${model_name} \
   ${IMAGE} bash
 docker exec -it flagrelease-fix-${model_name} bash
 # 容器内自检
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 hy-smi
 python -c "import vllm; print(vllm.__version__)"   # 此镜像应为 0.24.0
 # 若报 vllm._rocm_C / vllm._C / libhydmi.so 找不到 → 该镜像编译扩展不全，换镜像。见 KNOWLEDGE 一。
@@ -85,7 +85,7 @@ ls /models/flagrelease/fixes_models/<模型名>   # 确认 config.json / *.safet
 > XingChen4-0907 参考用 TP=4。若 OOM，先增大 TP，再降 `--max-model-len`，再降 `--gpu-memory-utilization`。
 
 ```bash
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export HIP_VISIBLE_DEVICES=0,1,2,3               # 用几张卡就列几张

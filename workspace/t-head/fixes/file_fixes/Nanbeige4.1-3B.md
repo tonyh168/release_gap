@@ -1,8 +1,10 @@
 # Nanbeige4.1-3B 评测脚本完整留档
 
+> 本文件只保存评测脚本快照。推理容器必须绑定 `/dev:/dev`、`/usr/local/PPU_SDK:/usr/local/PPU_SDK`、`/mnt/workspace/models:/models`；完整、已核验的 `docker run`、`docker exec` 和健康检查命令见 [适配记录](../Nanbeige4.1-3B.md) 与 [发布报告](../../reports/Nanbeige4.1-3B_report.md)。评测容器只访问 API，仅绑定 `/mnt/workspace/models:/models`。
+
 ## 来源与用途
 
-来源于仓库留存的 `workspace/t-head/fixes/fast_gpqa.py`，包含 `_extract_explicit_mcq_answer` 的行级保守答案抽取修复。当前堡垒机未能定位 T-Head 远端资产，因此尚未证明该快照与远端运行文件逐字节一致。
+来源于仓库留存的 `workspace/t-head/fixes/fast_gpqa.py`，包含 `_extract_explicit_mcq_answer` 的行级保守答案抽取修复。现已定位 T-Head 远端资产并完成 SHA-256 核对：本地快照为 `3c412d5a75687d5a512f7c3e8d98fcf1993284449be46171c79e924020eaae46`，远端修复前备份为 `9c13246eb7470f3db21b51e33be177a27d85454d0f619c154a93d32df19df2c0`，远端后续 Magistral 修改前备份为 `122b4dcce66f21f4f3ab8d6e70b2828d5eae4e9f91ea5d24aef11ea7582ac3bb`，当前远端脚本为 `e26579051c1593091862a01527faee1c10933bbf18f039292ee45bc03b858d70`。四者不相同，因此本文件是仓库快照，不得宣称与某次远端运行脚本逐字节一致。
 
 ## 复现方式
 

@@ -83,7 +83,20 @@ MATH-500抽样必须记录per-subset语义、每级题数与每级分数。reaso
 # CONTAINER_DEVS: --security-opt seccomp=unconfined --security-opt label=disable --device=/dev/kfd --device=/dev/dri --shm-size=64g --group-add=video -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
 ```
 
-### 二、容器配置
+### 二、容器创建（宿主机执行）
+
+```bash
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
+  --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+  -v /public-flash/models:/models \
+  -v /opt/hyhal:/opt/hyhal:ro \
+  --name day0-light-r1-7b-ds \
+  harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
+  bash -lc 'sleep infinity'
+```
+
+### 三、容器配置
 
 ```text
 name: day0-light-r1-7b-ds
@@ -101,7 +114,7 @@ group: video
 
 这是现有实例的配置留档；GPU5、端口8003或容器名已占用时不要重复创建。
 
-### 三、启动服务
+### 四、启动服务
 
 ```bash
 export DTK_HOME=/opt/dtk
@@ -119,7 +132,9 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=attention_backend
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
 export VLLM_FL_OOT_ENABLED=0

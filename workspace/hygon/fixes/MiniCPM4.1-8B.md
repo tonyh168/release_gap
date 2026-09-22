@@ -102,8 +102,8 @@ tokenizer 的 chat template 在没有 `/no_think` 或 `enable_thinking=False` �
 
 ```bash
 export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk-26.04-DCC2602-0317
-export HIP_PATH=/opt/dtk-26.04-DCC2602-0317/hip
+export ROCM_PATH=/opt/dtk
+export HIP_PATH=/opt/dtk/hip
 export HSA_PATH=/opt/dtk/hsa
 export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
 export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
@@ -113,7 +113,8 @@ export HIP_VISIBLE_DEVICES=4
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/MiniCPM4.1-8B
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/MiniCPM4.1-8B
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange,argmax,broadcast_to,copy,cos,cumsum,div,expand,index,le,lt,masked_fill,rand_like,randn,reciprocal,rsub,scatter,sin,softmax,sub,sum,to,where
 ```
 

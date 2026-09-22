@@ -67,7 +67,29 @@ export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 /usr/local/Ascend/driver -> /usr/local/Ascend/driver
 /usr/local/dcmi -> /usr/local/dcmi
 /usr/local/bin/npu-smi -> /usr/local/bin/npu-smi
+/usr/local/sbin -> /usr/local/sbin
 /etc/ascend_install.info -> /etc/ascend_install.info
+```
+
+按实际运行配置规范化后的可复现命令（原节点默认 runtime 即为 `ascend`，这里显式写出）：
+
+```bash
+docker run -d --restart unless-stopped \
+  --runtime=ascend --network=host --ipc=host \
+  --privileged --security-opt=label=disable --shm-size=64g \
+  -e ASCEND_VISIBLE_DEVICES=10,11 \
+  -e ASCEND_RT_VISIBLE_DEVICES=10,11 \
+  -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 \
+  -v /public-flash/models:/models \
+  -v /data/flagos-workspace/microsoft/Phi-3-mini-128k-instruct:/flagos-workspace \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+  -v /usr/local/dcmi:/usr/local/dcmi \
+  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/sbin:/usr/local/sbin \
+  -v /etc/ascend_install.info:/etc/ascend_install.info \
+  --name Phi-3-mini-128k-instruct_flagos \
+  harbor.baai.ac.cn/flagrelease-public/flagrelease_ascend_vllm020plugin_base:no_vllm_ascend \
+  sleep infinity
 ```
 
 ## Step 1：启动 vLLM 服务

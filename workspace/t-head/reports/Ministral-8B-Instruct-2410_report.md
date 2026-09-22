@@ -104,35 +104,85 @@ verdict.json 原文：
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 30.0
 # SCORE_FLAGOS: 28.0
-# CONTAINER_DEVS: -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models --privileged --net=host --ipc=host --shm-size=512g
+# HOST_PPU_SDK_ROOT_DEFAULT: /usr/local/PPU_SDK
+# HOST_MODEL_ROOT_DEFAULT: /mnt/workspace/models
+# CONTAINER_PPU_SDK_ROOT: /usr/local/PPU_SDK
+# CONTAINER_MODEL_ROOT: /models
+# CONTAINER_DEVS: --network host --ipc host --privileged --shm-size=512g -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models
 ```
 
-### 二、容器创建（宿主机执行）
+### 二、推理容器创建（宿主机执行）
+
+原始服务运行在共享容器 `flagrelease_thead_model_dl_20260915`。以下使用模型独占名称，避免不同报告都创建 `flagos`。执行前确认 GPU3 和端口 `18081` 空闲。
 
 ```bash
-docker run --init -it --privileged --net=host --ipc=host --shm-size=512g \
+set -euo pipefail
+
+IMAGE="harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100"
+CONTAINER="flagrelease_thead_ministral_8b_instruct_2410_repro"
+MODEL_DIR="Ministral-8B-Instruct-2410"
+HOST_PPU_SDK_ROOT="${HOST_PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+HOST_MODEL_ROOT="${HOST_MODEL_ROOT:-/mnt/workspace/models}"
+
+test -d /dev
+test -d "$HOST_PPU_SDK_ROOT"
+test -d "$HOST_MODEL_ROOT/$MODEL_DIR"
+test -f "$HOST_MODEL_ROOT/$MODEL_DIR/config.json"
+mkdir -p "$HOST_MODEL_ROOT/_vllm_cache" "$HOST_MODEL_ROOT/_serve_logs"
+test -w "$HOST_MODEL_ROOT/_vllm_cache"
+test -w "$HOST_MODEL_ROOT/_serve_logs"
+
+docker run -d \
+  --name "$CONTAINER" \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
   -v /dev:/dev \
-  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
-  -v /mnt/workspace/models:/models \
-  --name flagos \
-  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
-  /bin/bash
+  -v "$HOST_PPU_SDK_ROOT:/usr/local/PPU_SDK" \
+  -v "$HOST_MODEL_ROOT:/models" \
+  "$IMAGE" \
+  sleep infinity
 ```
 
-### 三、启动服务（容器内执行）
+宿主机路径可通过 `HOST_PPU_SDK_ROOT`、`HOST_MODEL_ROOT` 覆盖；容器内统一使用 `/usr/local/PPU_SDK`、`/models`。
+
+### 三、启动服务（宿主机执行）
 
 ```bash
+docker exec -d flagrelease_thead_ministral_8b_instruct_2410_repro bash -lc '
+set -euo pipefail
 
+MODEL_ROOT="${MODEL_ROOT:-/models}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_ROOT}/Ministral-8B-Instruct-2410}"
+CACHE_ROOT="${CACHE_ROOT:-${MODEL_ROOT}/_vllm_cache/ministral-8b-instruct-2410-gpu3}"
+LOG_ROOT="${LOG_ROOT:-${MODEL_ROOT}/_serve_logs}"
+PPU_SDK_ROOT="${PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+TARGET_DEVICES="${TARGET_DEVICES:-3}"
+
+test -f "${MODEL_PATH}/config.json"
+test -d "${PPU_SDK_ROOT}/CUDA_SDK"
+mkdir -p "${CACHE_ROOT}/torchinductor" "${CACHE_ROOT}/triton" "${LOG_ROOT}"
+test -w "${CACHE_ROOT}"
+test -w "${LOG_ROOT}"
+
+export XPU_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export CUDA_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export HIP_VISIBLE_DEVICES="${TARGET_DEVICES}"
 export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
-
 export VLLM_FL_FLAGOS_WHITELIST=lift_fresh,empty,zero_,zeros,arange_start,true_divide,pow_scalar,reciprocal,mul,unsqueeze,cos,sin,cat,to_copy,ones,narrow,fill_scalar_,mm_out,index,rand_like,linear,alias,full,argmax,lt_scalar,scalar_tensor,where_self,where_self_out,true_divide_,softmax,softmax_out,exponential_,unbind,add,copy_,sub,expand,scatter_,attention_backend,rms_norm,silu_and_mul,rotary_embedding
-
-export PPU_HOME=/usr/local/PPU_SDK
-export CUDA_HOME=/usr/local/PPU_SDK/CUDA_SDK
+export VLLM_FL_OOT_BLACKLIST=silu_and_mul
+export VLLM_CACHE_ROOT="${CACHE_ROOT}"
+export TORCHINDUCTOR_CACHE_DIR="${CACHE_ROOT}/torchinductor"
+export TRITON_CACHE_DIR="${CACHE_ROOT}/triton"
+export VLLM_FL_TRITON_CACHE_ROOT="${CACHE_ROOT}/triton"
+export PPU_HOME="${PPU_SDK_ROOT}"
+export CUDA_HOME="${PPU_SDK_ROOT}/CUDA_SDK"
 export HF_ENDPOINT=https://hf-mirror.com
-/usr/local/bin/vllm serve /models/Ministral-8B-Instruct-2410 \
+
+exec /usr/local/bin/vllm serve "${MODEL_PATH}" \
   --served-model-name Ministral-8B-Instruct-2410 \
   --host 0.0.0.0 \
   --port 18081 \
@@ -141,5 +191,20 @@ export HF_ENDPOINT=https://hf-mirror.com
   --max-model-len 32768 \
   --gpu-memory-utilization 0.85 \
   --trust-remote-code \
-  --enforce-eager
+  --enforce-eager \
+  > "${LOG_ROOT}/Ministral-8B-Instruct-2410-repro-gpu3-port18081.log" 2>&1
+'
+```
+
+历史进程继承共享容器的 `XPU_VISIBLE_DEVICES=all`，以上规范化命令将 XPU/CUDA/HIP 三套变量都显式固定到 `TARGET_DEVICES`，避免新进程选到其他卡。此处显式缓存目录是可移植复现配置，**不是历史进程的原始缓存路径**；目标机无需预建，可覆盖 `CACHE_ROOT`。
+
+容器内覆盖变量需以 `docker exec -e CACHE_ROOT=/models/_vllm_cache/新运行名 -e TARGET_DEVICES=实际设备号 ...` 传入；宿主机变量不自动透传。并行启动还需另选空闲端口和独立日志名。
+
+### 四、启动后核验
+
+```bash
+curl -fsS http://127.0.0.1:18081/health
+curl -fsS http://127.0.0.1:18081/v1/models
+docker exec flagrelease_thead_ministral_8b_instruct_2410_repro \
+  bash -lc "pgrep -af '^/usr/local/bin/python3.12 /usr/local/bin/vllm serve /models/Ministral-8B-Instruct-2410'; ppu-smi"
 ```

@@ -86,7 +86,7 @@ if __name__ == "__main__":
 # 在本机执行；源码从本机 /tmp 通过 SSH 标准输入传给远端容器
 ssh -o BatchMode=yes -p 2224 'xionglei@root@10.232.2.33@bastion.aiops.baai.ac.cn' \
   "docker exec -i day0-eval-standard env \
-    LD_LIBRARY_PATH=/opt/dtk-26.04-DCC2602-0317/dcc/gcvm/lib:/opt/dtk-26.04-DCC2602-0317/hip/lib:/opt/dtk-26.04-DCC2602-0317/llvm/lib:/opt/dtk-26.04-DCC2602-0317/lib:/opt/dtk-26.04-DCC2602-0317/lib64:/opt/dtk-26.04-DCC2602-0317/.hyhal/hsa/lib:/opt/dtk-26.04-DCC2602-0317/.hyhal/rocm_smi/lib:/usr/local/lib:/usr/local/lib64:/opt/mpi/lib:/opt/hwloc/lib \
+    LD_LIBRARY_PATH=/opt/dtk/dcc/gcvm/lib:/opt/dtk/hip/lib:/opt/dtk/llvm/lib:/opt/dtk/lib:/opt/dtk/lib64:/opt/dtk/.hyhal/hsa/lib:/opt/dtk/.hyhal/rocm_smi/lib:/usr/local/lib:/usr/local/lib64:/opt/mpi/lib:/opt/hwloc/lib \
     /usr/bin/python3 - \
     --model-name MiniCPM4.1-8B \
     --api-base http://127.0.0.1:8002/v1 \

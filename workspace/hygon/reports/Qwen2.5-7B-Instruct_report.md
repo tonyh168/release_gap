@@ -189,24 +189,24 @@ python3 fast_gpqa.py \
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video --group-add render \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video --group-add render \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
   -v /opt/hyhal:/opt/hyhal:ro \
   --name flagrelease-qwen2p5-7b \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:

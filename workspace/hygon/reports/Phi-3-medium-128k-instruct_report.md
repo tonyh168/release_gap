@@ -13,7 +13,7 @@
 
 ## 定位
 
-- **部署侧根因是编译器路径，不是权重或端口**：Hygon 栈下必须显式指定 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`，FlagGems/Triton 编译路径才能正常工作，服务才能稳定启动。
+- **部署侧根因是编译器路径，不是权重或端口**：Hygon 栈下必须显式指定 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`，FlagGems/Triton 编译路径才能正常工作，服务才能稳定启动。
 - **必须只用 `HIP_VISIBLE_DEVICES` 控卡**：设置 `ROCR_VISIBLE_DEVICES` 会让容器内 `torch.cuda.is_available()` 变为 `False`，本轮最终未设置该变量。
 - **精度侧的主要风险不是正确率而是输出形态**：`max_model_len=131072` 使标准评测自动推导 `max_tokens=32768`。GPQA 是短答案选择题，这个生成窗口过大，少数题出现长输出/复读（runaway 2 题、部分请求 `finish_reason=length`），拉长耗时并污染结果。本轮分数仍在 5% 相对退化门限内，但 runaway 必须作为质量风险保留。
 - 本轮截断检测通过 `--skip-truncation-check` 显式跳过，**不能据此声明已排除截断**。
@@ -38,8 +38,8 @@ shm-size: 64 GiB
 1. 使用统一 Hygon 新镜像；
 2. 使用 `HIP_VISIBLE_DEVICES=0,1`，不设置 `ROCR_VISIBLE_DEVICES`；
 3. 固定 `TRITON_ATTN`、BF16、TP=2 和 eager 模式；
-4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`（失败尝试：不设置时触发 `HSACOError`，服务无法启动）；
-5. 使用独立 Triton 缓存目录与 FlagGems 实际启用算子记录文件（`enabled_ops_retry-clang18-20260917.txt`）；
+4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`（失败尝试：不设置时触发 `HSACOError`，服务无法启动）；
+5. 使用独立 Triton 缓存目录；
 6. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond 50 题；
 7. 使用 `accuracy_compare.py` 与 NV 记录值按 5% 相对退化门限比较。
 
@@ -47,7 +47,6 @@ shm-size: 64 GiB
 
 ```text
 /public-flash/models/release_run_logs/Phi-3-medium-128k-instruct/serve_retry-clang18-20260917.log
-/public-flash/models/release_run_logs/Phi-3-medium-128k-instruct/enabled_ops_retry-clang18-20260917.txt
 ```
 
 健康检查：`curl http://127.0.0.1:8000/health`、`curl http://127.0.0.1:8000/v1/models`。
@@ -157,29 +156,29 @@ python3 fast_gpqa.py \
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video --group-add render \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video --group-add render \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
   -v /opt/hyhal:/opt/hyhal:ro \
   --name flagrelease-phi3-medium-128k \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/release_run_logs/triton_cache/Phi-3-medium-128k-instruct
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/release_run_logs/Phi-3-medium-128k-instruct/enabled_ops_retry-clang18-20260917.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Phi-3-medium-128k-instruct
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 vllm serve /models/flagrelease/fixes_models/Phi-3-medium-128k-instruct \
   --served-model-name Phi-3-medium-128k-instruct \
   --dtype bfloat16 \

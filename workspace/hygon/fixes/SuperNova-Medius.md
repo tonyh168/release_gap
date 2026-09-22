@@ -93,7 +93,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export VLLM_NO_USAGE_STATS=1
 
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 ```
 
 `TRITON_HIP_CLANG_PATH` 是必须的 Hygon 适配变量。DTK 目录带版本号时，Triton 会错误判断 ROCm 目录并选择不存在或不兼容的 clang；显式指定 clang-18 后，`.amdgcn`/HSACO 编译可以正常完成。

@@ -55,6 +55,29 @@ shm-size:   512 GiB
 /mnt/workspace/models -> /models
 ```
 
+宿主机上的实际容器配置经 `docker inspect` 核对。以下命令可在同名容器不存在时重建等价的长驻推理容器；`sleep infinity` 是容器 CMD，模型服务另由 `docker exec` 启动：
+
+```bash
+set -euo pipefail
+test -d /dev
+test -d /usr/local/PPU_SDK
+test -d /mnt/workspace/models/Ministral-8B-Instruct-2410
+
+docker run -d \
+  --name flagrelease_thead_model_dl_20260915 \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  sleep infinity
+```
+
+评测容器 `flagrelease_thead_eval_20260915` 只需要 `/mnt/workspace/models:/models`；它不执行 PPU 推理，因此没有挂载 `/dev` 或 `/usr/local/PPU_SDK`。
+
 ## Step 1：启动 vLLM 服务
 
 实际启动命令：
@@ -88,6 +111,7 @@ export CUDA_VISIBLE_DEVICES=3
 export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
+export VLLM_FL_OOT_BLACKLIST=silu_and_mul
 
 export VLLM_FL_FLAGOS_WHITELIST=lift_fresh,empty,zero_,zeros,arange_start,true_divide,pow_scalar,reciprocal,mul,unsqueeze,cos,sin,cat,to_copy,ones,narrow,fill_scalar_,mm_out,index,rand_like,linear,alias,full,argmax,lt_scalar,scalar_tensor,where_self,where_self_out,true_divide_,softmax,softmax_out,exponential_,unbind,add,copy_,sub,expand,scatter_,attention_backend,rms_norm,silu_and_mul,rotary_embedding
 

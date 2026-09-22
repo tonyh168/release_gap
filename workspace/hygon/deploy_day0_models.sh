@@ -5,7 +5,7 @@ set -euo pipefail
 IMAGE="harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4"
 MODEL_ROOT="/public-flash/models"
 LOG_ROOT="${MODEL_ROOT}/day0_logs"
-DTK_ENV="/opt/dtk-26.04-DCC2602-0317/env.sh"
+DTK_ENV="/opt/dtk/env.sh"
 RUN_ID="${1:-$(date +%Y%m%d-%H%M%S)}"
 
 MODELS=(
@@ -137,8 +137,7 @@ for index in "${!MODELS[@]}"; do
     -e "HSA_PATH=/opt/dtk/hsa"
     -e "DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode"
     -e "TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18"
-    -e "VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/${model}"
-    -e "FLAGGEMS_ENABLE_OPLIST_PATH=/models/day0_logs/${model}-enabled-ops-${RUN_ID}.txt"
+    -e "VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/${model}"
     -e "GEMS_VENDOR=hygon"
     -e "VLLM_PLUGINS=fl"
     -e "HIP_VISIBLE_DEVICES=${gpu}"
@@ -160,7 +159,7 @@ for index in "${!MODELS[@]}"; do
     exec_env+=(-e "VLLM_FL_OOT_ENABLED=0")
   fi
   docker exec -d "${exec_env[@]}" "${container}" bash -lc \
-    "source '${DTK_ENV}' && exec vllm serve '/models/${model}' \
+    "mkdir -p '/models/triton_cache/${model}' && source '${DTK_ENV}' && exec vllm serve '/models/${model}' \
       --served-model-name '${model}' \
       --dtype bfloat16 \
       --tensor-parallel-size 1 \

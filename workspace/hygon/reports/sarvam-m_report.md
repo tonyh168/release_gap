@@ -48,11 +48,11 @@ SQLite autotune 数据库锁导致 53/198 后崩溃；评测临时容器被清�
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --security-opt label=disable --group-add video --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro \
   --name flagos-hygon-sarvam-m \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）

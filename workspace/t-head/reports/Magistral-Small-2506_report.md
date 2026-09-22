@@ -85,22 +85,86 @@ Reasoning 模型必须显式对齐模型卡采样参数和 prompt；配置文件
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 62.0
 # SCORE_FLAGOS: 68.0
-# CONTAINER_DEVS: -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models --privileged --net=host --ipc=host --shm-size=512g
+# HOST_PPU_SDK_ROOT_DEFAULT: /usr/local/PPU_SDK
+# HOST_MODEL_ROOT_DEFAULT: /mnt/workspace/models
+# CONTAINER_PPU_SDK_ROOT: /usr/local/PPU_SDK
+# CONTAINER_MODEL_ROOT: /models
+# CONTAINER_DEVS: --network host --ipc host --privileged --shm-size=512g -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models
 ```
 
-### 二、启动服务（容器内执行）
+### 二、推理容器创建（宿主机执行）
+
+正式结果原始进程位于共享容器 `flagrelease_thead_model_dl_20260915`；另有 `flagrelease_thead_magistral_mistralfmt_20260917` 承载消融服务。下面使用独立复现容器名，避免覆盖共享容器。执行前必须确认 GPU12、13 和端口 `18088` 空闲。
 
 ```bash
-export CUDA_VISIBLE_DEVICES=12,13
-export HIP_VISIBLE_DEVICES=12,13
+set -euo pipefail
+
+IMAGE="harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100"
+CONTAINER="flagrelease_thead_magistral_small_2506_repro"
+MODEL_DIR="Magistral-Small-2506"
+HOST_PPU_SDK_ROOT="${HOST_PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+HOST_MODEL_ROOT="${HOST_MODEL_ROOT:-/mnt/workspace/models}"
+
+test -d /dev
+test -d "$HOST_PPU_SDK_ROOT"
+test -d "$HOST_MODEL_ROOT/$MODEL_DIR"
+test -f "$HOST_MODEL_ROOT/$MODEL_DIR/config.json"
+mkdir -p "$HOST_MODEL_ROOT/_vllm_cache" "$HOST_MODEL_ROOT/_serve_logs"
+test -w "$HOST_MODEL_ROOT/_vllm_cache"
+test -w "$HOST_MODEL_ROOT/_serve_logs"
+
+docker run -d \
+  --name "$CONTAINER" \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v "$HOST_PPU_SDK_ROOT:/usr/local/PPU_SDK" \
+  -v "$HOST_MODEL_ROOT:/models" \
+  "$IMAGE" \
+  sleep infinity
+```
+
+宿主机路径可通过 `HOST_PPU_SDK_ROOT`、`HOST_MODEL_ROOT` 覆盖；容器内统一使用 `/usr/local/PPU_SDK`、`/models`。
+
+### 三、启动服务（宿主机执行）
+
+```bash
+docker exec -d flagrelease_thead_magistral_small_2506_repro bash -lc '
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/models}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_ROOT}/Magistral-Small-2506}"
+CACHE_ROOT="${CACHE_ROOT:-${MODEL_ROOT}/_vllm_cache/magistral-nv8-gpu12-13}"
+LOG_ROOT="${LOG_ROOT:-${MODEL_ROOT}/_serve_logs}"
+PPU_SDK_ROOT="${PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+TARGET_DEVICES="${TARGET_DEVICES:-12,13}"
+
+test -f "${MODEL_PATH}/config.json"
+test -d "${PPU_SDK_ROOT}/CUDA_SDK"
+mkdir -p "${CACHE_ROOT}/torchinductor" "${CACHE_ROOT}/triton" "${LOG_ROOT}"
+test -w "${CACHE_ROOT}"
+test -w "${LOG_ROOT}"
+
+export XPU_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export CUDA_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export HIP_VISIBLE_DEVICES="${TARGET_DEVICES}"
 export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
 export FLAGGEMS_DB_URL=sqlite:///:memory:
 export VLLM_FL_FLAGOS_WHITELIST=arange_start,argmax,exponential_,lt_scalar,rand_like,randn,softmax,softmax_out,where_self,where_self_out,attention_backend
 export VLLM_FL_OOT_BLACKLIST=silu_and_mul,rms_norm,rotary_embedding
+export VLLM_CACHE_ROOT="${CACHE_ROOT}"
+export TORCHINDUCTOR_CACHE_DIR="${CACHE_ROOT}/torchinductor"
+export TRITON_CACHE_DIR="${CACHE_ROOT}/triton"
+export VLLM_FL_TRITON_CACHE_ROOT="${CACHE_ROOT}/triton"
+export PPU_HOME="${PPU_SDK_ROOT}"
+export CUDA_HOME="${PPU_SDK_ROOT}/CUDA_SDK"
+export HF_ENDPOINT=https://hf-mirror.com
 
-/usr/local/bin/vllm serve /models/Magistral-Small-2506 \
+exec /usr/local/bin/vllm serve "${MODEL_PATH}" \
   --served-model-name Magistral-Small-2506 \
   --host 0.0.0.0 --port 18088 \
   --dtype bfloat16 --tensor-parallel-size 2 \
@@ -108,10 +172,25 @@ export VLLM_FL_OOT_BLACKLIST=silu_and_mul,rms_norm,rotary_embedding
   --trust-remote-code --enforce-eager \
   --tokenizer-mode mistral --config-format mistral --load-format mistral \
   --tool-call-parser mistral --enable-auto-tool-choice \
-  --no-enable-prefix-caching --no-enable-chunked-prefill
+  --no-enable-prefix-caching --no-enable-chunked-prefill \
+  > "${LOG_ROOT}/Magistral-Small-2506-repro-gpu12-13-port18088.log" 2>&1
+'
 ```
 
-### 三、评测参数
+`magistral-nv8-gpu12-13` 只是默认缓存命名空间。目标机无需预建；命令会创建所需子目录，也可通过 `CACHE_ROOT`、`LOG_ROOT`、`MODEL_PATH` 覆盖。
+
+这些是容器内变量，需以 `docker exec -e CACHE_ROOT=/models/_vllm_cache/新运行名 -e TARGET_DEVICES=实际设备号 ...` 传入；宿主机变量不会自动透传。并行启动时还需另选空闲端口和独立日志名，避免占用现有服务资源。
+
+### 四、启动后核验
+
+```bash
+curl -fsS http://127.0.0.1:18088/health
+curl -fsS http://127.0.0.1:18088/v1/models
+docker exec flagrelease_thead_magistral_small_2506_repro \
+  bash -lc "pgrep -af '^/usr/local/bin/python3.12 /usr/local/bin/vllm serve /models/Magistral-Small-2506'; ppu-smi"
+```
+
+### 五、评测参数
 
 ```text
 model: Magistral-Small-2506

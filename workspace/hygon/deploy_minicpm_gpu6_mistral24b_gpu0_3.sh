@@ -109,8 +109,7 @@ launch_service() {
   local whitelist="$7"
   local deploy_log="$8"
   local serve_log="$9"
-  local enabled_ops_path="/models/day0_logs/${model}-enabled-ops-${RUN_ID}.txt"
-  local cache_root="/models/day0_logs/triton_cache/${model}"
+  local cache_root="/models/triton_cache/${model}"
 
   {
     echo "run_id=${RUN_ID}"
@@ -146,10 +145,9 @@ launch_service() {
     -e "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200" \
     -e "FLAGGEMS_DB_URL=sqlite:///:memory:" \
     -e "VLLM_FL_TRITON_CACHE_ROOT=${cache_root}" \
-    -e "FLAGGEMS_ENABLE_OPLIST_PATH=${enabled_ops_path}" \
     -e "VLLM_FL_FLAGOS_WHITELIST=${whitelist}" \
     "${container}" bash -lc \
-    "source '${CONTAINER_DTK_ENV}' && python -c 'import torch, vllm, vllm_fl; assert torch.cuda.device_count() == ${tensor_parallel_size}, torch.cuda.device_count(); print(\"vllm=\" + vllm.__version__); print(\"device_count=\" + str(torch.cuda.device_count())); print(\"plugin_fl=ok\")'" \
+    "mkdir -p '${cache_root}' && source '${CONTAINER_DTK_ENV}' && python -c 'import torch, vllm, vllm_fl; assert torch.cuda.device_count() == ${tensor_parallel_size}, torch.cuda.device_count(); print(\"vllm=\" + vllm.__version__); print(\"device_count=\" + str(torch.cuda.device_count())); print(\"plugin_fl=ok\")'" \
     2>&1 | tee -a "${deploy_log}"
 
   docker exec -d \
@@ -167,10 +165,9 @@ launch_service() {
     -e "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200" \
     -e "FLAGGEMS_DB_URL=sqlite:///:memory:" \
     -e "VLLM_FL_TRITON_CACHE_ROOT=${cache_root}" \
-    -e "FLAGGEMS_ENABLE_OPLIST_PATH=${enabled_ops_path}" \
     -e "VLLM_FL_FLAGOS_WHITELIST=${whitelist}" \
     "${container}" bash -lc \
-    "source '${CONTAINER_DTK_ENV}' && exec /usr/bin/python3 /usr/local/bin/vllm serve '/models/${model}' \
+    "mkdir -p '${cache_root}' && source '${CONTAINER_DTK_ENV}' && exec /usr/bin/python3 /usr/local/bin/vllm serve '/models/${model}' \
       --served-model-name '${model}' \
       --dtype bfloat16 \
       --tensor-parallel-size '${tensor_parallel_size}' \

@@ -38,6 +38,7 @@ cmd:        ["sleep", "infinity"]
 network:    host
 ipc:        host
 privileged: true
+shm-size:   512 GiB
 ```
 
 挂载：
@@ -47,6 +48,29 @@ privileged: true
 /usr/local/PPU_SDK    -> /usr/local/PPU_SDK
 /mnt/workspace/models -> /models
 ```
+
+宿主机上的实际容器配置经 `docker inspect` 核对。以下命令可在同名容器不存在时重建等价的长驻推理容器：
+
+```bash
+set -euo pipefail
+test -d /dev
+test -d /usr/local/PPU_SDK
+test -d /mnt/workspace/models/Qwen2.5-7B-Instruct
+
+docker run -d \
+  --name flagrelease_thead_model_dl_20260915 \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  sleep infinity
+```
+
+评测容器只挂载 `/mnt/workspace/models:/models`，不执行 PPU 推理，因而没有挂载 `/dev` 和 `/usr/local/PPU_SDK`。
 
 ## Step 1：启动 vLLM 服务
 
@@ -85,7 +109,7 @@ export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
 
-export VLLM_FL_FLAGOS_WHITELIST=add,addmm,addmm_,addmm_dtype,addmm_dtype_out,addmm_out,arange_start,argmax,cat,copy_,cos,cumsum,cumsum_out,embedding,eq_scalar,exponential_,fill_scalar_,full,gather,index,layer_norm,le,lt,lt_scalar,mm,mm_out,mul,normal_,ones,pow_scalar,rand_like,randn,reciprocal,remainder,rsub_scalar,scatter_,sigmoid,sin,softmax,softmax_out,sort,sort_stable,sub,to_copy,true_divide,true_divide_,uniform_,where_self,where_self_out,zero_,zeros,attention_backend,rms_norm,silu_and_mul,rotary_embedding
+export VLLM_FL_FLAGOS_WHITELIST=lift_fresh,empty,zero_,zeros,arange_start,true_divide,pow_scalar,reciprocal,mul,unsqueeze,cos,sin,cat,to_copy,ones,fill_scalar_,narrow,copy_,randn,addmm_out,broadcast_to,mm_out,index,rand_like,linear,alias,full,argmax,lt_scalar,scalar_tensor,where_self,where_self_out,true_divide_,softmax,softmax_out,exponential_,unbind,add,sub,expand,eq_scalar,masked_fill_,ones_like,scatter_add_0,gt_scalar,repeat,bitwise_or_tensor,mul_,sub_,sort,sort_stable,cumsum,rsub_scalar,gather,lt,cumsum_out,le,scatter_,attention_backend,rms_norm,silu_and_mul,rotary_embedding
 
 export VLLM_CACHE_ROOT=/models/_vllm_cache/qwen2.5-7b-gpu1
 export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/qwen2.5-7b-gpu1/torchinductor

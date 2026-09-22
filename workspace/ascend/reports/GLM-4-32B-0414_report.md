@@ -42,21 +42,29 @@ Hugging Face 大分片经代理下载时曾断流，断点续传后 14 个权重
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 55
 # SCORE_FLAGOS: 54
-# CONTAINER_DEVS: --privileged --shm-size=64g -v /public-flash/models:/models -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /etc/ascend_install.info:/etc/ascend_install.info
+# CONTAINER_DEVS: --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g -e ASCEND_VISIBLE_DEVICES=12,13 -e ASCEND_RT_VISIBLE_DEVICES=12,13 -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 -v /public-flash/models:/models -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /usr/local/sbin:/usr/local/sbin -v /etc/ascend_install.info:/etc/ascend_install.info
 ```
 
 ### 二、容器创建（宿主机执行）
 
+节点实际部署依赖 Docker 的默认 Ascend runtime；下列命令显式写出 `--runtime=ascend`，行为等价且可跨节点复现。
+
 ```bash
-docker run --init -it --net=host --ipc=host --privileged --shm-size=64g \
+docker run -d --restart unless-stopped --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g \
+  -e ASCEND_VISIBLE_DEVICES=12,13 \
+  -e ASCEND_RT_VISIBLE_DEVICES=12,13 \
+  -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 \
   -v /public-flash/models:/models \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
   -v /usr/local/dcmi:/usr/local/dcmi \
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/sbin:/usr/local/sbin \
   -v /etc/ascend_install.info:/etc/ascend_install.info \
-  --name flagos-ascend-glm-4-32b-0414 \
+  --name GLM-4-32B-0414_flagos \
   harbor.baai.ac.cn/flagrelease-public/flagrelease_ascend_vllm020plugin_base:no_vllm_ascend \
-  /bin/bash
+  sleep infinity
+
+docker exec -it GLM-4-32B-0414_flagos bash
 ```
 
 ### 三、启动服务（容器内执行）

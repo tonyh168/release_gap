@@ -53,6 +53,29 @@ shm-size:   512 GiB
 /mnt/workspace/models -> /models
 ```
 
+宿主机上的实际容器配置经 `docker inspect` 核对。以下命令可在同名容器不存在时重建等价的长驻推理容器：
+
+```bash
+set -euo pipefail
+test -d /dev
+test -d /usr/local/PPU_SDK
+test -d /mnt/workspace/models/Phi-3-vision-128k-instruct
+
+docker run -d \
+  --name flagrelease_thead_model_dl_20260915 \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  sleep infinity
+```
+
+评测容器只挂载 `/mnt/workspace/models:/models`，无需 `/dev` 和 PPU SDK；三项推理挂载不能因此从推理容器命令中省略。
+
 ## Step 1：启动 vLLM 服务
 
 实际启动命令：

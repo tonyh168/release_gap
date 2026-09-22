@@ -100,40 +100,87 @@ Thinking 模型在 PPU 上做正式精度评测应优先使用 `eval_batch_size=
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 68.0
 # SCORE_FLAGOS: 72.0
-# CONTAINER_DEVS: -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models --privileged --net=host --ipc=host --shm-size=512g
+# HOST_PPU_SDK_ROOT_DEFAULT: /usr/local/PPU_SDK
+# HOST_MODEL_ROOT_DEFAULT: /mnt/workspace/models
+# CONTAINER_PPU_SDK_ROOT: /usr/local/PPU_SDK
+# CONTAINER_MODEL_ROOT: /models
+# CONTAINER_DEVS: --network host --ipc host --privileged --shm-size=512g -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models
 ```
 
-### 二、容器创建（宿主机执行）
+### 二、推理容器创建（宿主机执行）
+
+原始服务运行在共享容器 `flagrelease_thead_model_dl_20260915`。以下使用独立复现容器名；执行前确认 GPU6 和端口 `18080` 空闲。
 
 ```bash
-docker run --init -it --privileged --net=host --ipc=host --shm-size=512g \
+set -euo pipefail
+
+IMAGE="harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100"
+CONTAINER="flagrelease_thead_qwen3_4b_thinking_2507_repro"
+MODEL_DIR="Qwen3-4B-Thinking-2507"
+HOST_PPU_SDK_ROOT="${HOST_PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+HOST_MODEL_ROOT="${HOST_MODEL_ROOT:-/mnt/workspace/models}"
+
+test -d /dev
+test -d "$HOST_PPU_SDK_ROOT"
+test -d "$HOST_MODEL_ROOT/$MODEL_DIR"
+test -f "$HOST_MODEL_ROOT/$MODEL_DIR/config.json"
+mkdir -p "$HOST_MODEL_ROOT/_vllm_cache" "$HOST_MODEL_ROOT/_serve_logs"
+test -w "$HOST_MODEL_ROOT/_vllm_cache"
+test -w "$HOST_MODEL_ROOT/_serve_logs"
+
+docker run -d \
+  --name "$CONTAINER" \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
   -v /dev:/dev \
-  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
-  -v /mnt/workspace/models:/models \
-  --name flagos \
-  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
-  /bin/bash
+  -v "$HOST_PPU_SDK_ROOT:/usr/local/PPU_SDK" \
+  -v "$HOST_MODEL_ROOT:/models" \
+  "$IMAGE" \
+  sleep infinity
 ```
 
-### 三、启动服务（容器内执行）
+宿主机路径可通过 `HOST_PPU_SDK_ROOT`、`HOST_MODEL_ROOT` 覆盖；容器内统一使用 `/usr/local/PPU_SDK`、`/models`。
+
+### 三、启动服务（宿主机执行）
 
 ```bash
+docker exec -d flagrelease_thead_qwen3_4b_thinking_2507_repro bash -lc '
+set -euo pipefail
 
+MODEL_ROOT="${MODEL_ROOT:-/models}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_ROOT}/Qwen3-4B-Thinking-2507}"
+CACHE_ROOT="${CACHE_ROOT:-${MODEL_ROOT}/_vllm_cache/qwen3-4b-gpu6}"
+LOG_ROOT="${LOG_ROOT:-${MODEL_ROOT}/_serve_logs}"
+PPU_SDK_ROOT="${PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+TARGET_DEVICES="${TARGET_DEVICES:-6}"
+
+test -f "${MODEL_PATH}/config.json"
+test -d "${PPU_SDK_ROOT}/CUDA_SDK"
+mkdir -p "${CACHE_ROOT}/torchinductor" "${CACHE_ROOT}/triton" "${LOG_ROOT}"
+test -w "${CACHE_ROOT}"
+test -w "${LOG_ROOT}"
+
+export XPU_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export CUDA_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export HIP_VISIBLE_DEVICES="${TARGET_DEVICES}"
 export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
 
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,cat,copy_,cos,cumsum,cumsum_out,true_divide,true_divide_,exponential_,fill_scalar_,full,gather,index,le,lt,lt_scalar,masked_fill_,mm,mm_out,mul,ones,pow_scalar,rand_like,randn,reciprocal,rsub_scalar,scatter_,sin,softmax,softmax_out,sort,sort_stable,sub,to_copy,where_self,where_self_out,zero_,zeros,attention_backend,rms_norm,silu_and_mul,rotary_embedding
 
-export VLLM_CACHE_ROOT=/models/_vllm_cache/qwen3-4b-gpu6
-export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/qwen3-4b-gpu6/torchinductor
-export TRITON_CACHE_DIR=/models/_vllm_cache/qwen3-4b-gpu6/triton
-export VLLM_FL_TRITON_CACHE_ROOT=/models/_vllm_cache/qwen3-4b-gpu6/triton
+export VLLM_CACHE_ROOT="${CACHE_ROOT}"
+export TORCHINDUCTOR_CACHE_DIR="${CACHE_ROOT}/torchinductor"
+export TRITON_CACHE_DIR="${CACHE_ROOT}/triton"
+export VLLM_FL_TRITON_CACHE_ROOT="${CACHE_ROOT}/triton"
 
-export PPU_HOME=/usr/local/PPU_SDK
-export CUDA_HOME=/usr/local/PPU_SDK/CUDA_SDK
+export PPU_HOME="${PPU_SDK_ROOT}"
+export CUDA_HOME="${PPU_SDK_ROOT}/CUDA_SDK"
 export HF_ENDPOINT=https://hf-mirror.com
-/usr/local/bin/vllm serve /models/Qwen3-4B-Thinking-2507 \
+
+exec /usr/local/bin/vllm serve "${MODEL_PATH}" \
   --served-model-name Qwen3-4B-Thinking-2507 \
   --host 0.0.0.0 \
   --port 18080 \
@@ -142,5 +189,20 @@ export HF_ENDPOINT=https://hf-mirror.com
   --max-model-len 32768 \
   --gpu-memory-utilization 0.85 \
   --trust-remote-code \
-  --enforce-eager
+  --enforce-eager \
+  > "${LOG_ROOT}/Qwen3-4B-Thinking-2507-repro-gpu6-port18080.log" 2>&1
+'
+```
+
+`qwen3-4b-gpu6` 是默认缓存命名空间，不是固定机器目录；命令自动创建，也可通过 `CACHE_ROOT`、`TARGET_DEVICES` 覆盖。
+
+容器内覆盖变量需以 `docker exec -e CACHE_ROOT=/models/_vllm_cache/新运行名 -e TARGET_DEVICES=实际设备号 ...` 传入；宿主机变量不自动透传。并行启动还需另选空闲端口和独立日志名。
+
+### 四、启动后核验
+
+```bash
+curl -fsS http://127.0.0.1:18080/health
+curl -fsS http://127.0.0.1:18080/v1/models
+docker exec flagrelease_thead_qwen3_4b_thinking_2507_repro \
+  bash -lc "pgrep -af '^/usr/local/bin/python3.12 /usr/local/bin/vllm serve /models/Qwen3-4B-Thinking-2507'; ppu-smi"
 ```

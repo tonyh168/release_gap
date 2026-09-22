@@ -17,7 +17,7 @@
 初始服务曾因容器内默认 clang 路径不匹配触发 `HSACOError`，后显式指定：
 
 ```bash
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 ```
 
 同时确认不能设置 `ROCR_VISIBLE_DEVICES`，否则容器内 `torch.cuda.is_available()` 会变为 `False`；最终只使用 `HIP_VISIBLE_DEVICES` 控制 GPU。
@@ -93,12 +93,12 @@ export HIP_VISIBLE_DEVICES=0,1
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/release_run_logs/triton_cache/Phi-3-medium-128k-instruct
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/release_run_logs/Phi-3-medium-128k-instruct/enabled_ops_retry-clang18-20260917.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Phi-3-medium-128k-instruct
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 ```
 
 健康检查：
@@ -121,7 +121,6 @@ curl http://127.0.0.1:8000/v1/models
 本次没有重新构建、重新打 tag 或推送镜像，也没有修改 vLLM、`vllm-plugin-FL` 或 FlagGems 源码。运行时新增内容主要包括：
 
 - 独立 Triton 缓存目录；
-- FlagGems 实际启用算子记录；
 - 服务日志；
 - EvalScope 预测、报告、汇总 JSON 和 NV 对比 JSON。
 
@@ -129,7 +128,6 @@ curl http://127.0.0.1:8000/v1/models
 
 ```text
 /public-flash/models/release_run_logs/Phi-3-medium-128k-instruct/serve_retry-clang18-20260917.log
-/public-flash/models/release_run_logs/Phi-3-medium-128k-instruct/enabled_ops_retry-clang18-20260917.txt
 ```
 
 ## Step 3：评测
@@ -256,8 +254,8 @@ Phi-3-medium-128k-instruct:
 1. 使用统一 Hygon 新镜像；
 2. 使用 `HIP_VISIBLE_DEVICES=0,1`，不设置 `ROCR_VISIBLE_DEVICES`；
 3. 固定 `TRITON_ATTN`、BF16、TP=2 和 eager 模式；
-4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`；
-5. 使用独立 Triton 缓存和算子记录文件；
+4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`；
+5. 使用独立 Triton 缓存目录；
 6. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond 50 题；
 7. 使用 `accuracy_compare.py` 与 NV 记录值按 5% 相对退化门限比较。
 

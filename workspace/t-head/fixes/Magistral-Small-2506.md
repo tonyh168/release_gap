@@ -21,7 +21,7 @@ Magistral-Small-2506 是 reasoning 模型。初始 T-Head 评测按普通模型�
 |------|---|
 | 宿主机 | `244-pm-aliyun-wlcb-zoned-d-810e-96G` / `8.130.132.221` |
 | 芯片 | PPU-ZW810E，16 × 96GB |
-| 推理容器 | `flagrelease_thead_magistral_mistralfmt_20260917` |
+| 正式结果推理容器 | `flagrelease_thead_model_dl_20260915`；`flagrelease_thead_magistral_mistralfmt_20260917` 用于其他消融服务 |
 | 评测容器 | `flagrelease_thead_eval_20260915` |
 | 镜像 | `harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100` |
 | vLLM / PyTorch | `vllm 0.24.0+empty` / `torch 2.10.0` |
@@ -29,6 +29,39 @@ Magistral-Small-2506 是 reasoning 模型。初始 T-Head 评测按普通模型�
 | 模型路径 | `/models/Magistral-Small-2506` |
 | GPU / TP / 端口 | `12,13` / `2` / `18088` |
 | dtype / max_model_len | `bfloat16` / `40960` |
+
+### 容器运行配置与挂载
+
+正式结果对应的推理进程位于长驻容器 `flagrelease_thead_model_dl_20260915`。远端 `docker inspect` 显示：host network、host IPC、`privileged=true`、共享内存 512 GiB，并以读写方式绑定以下三项：
+
+```text
+/dev                  -> /dev
+/usr/local/PPU_SDK    -> /usr/local/PPU_SDK
+/mnt/workspace/models -> /models
+```
+
+同名容器不存在时，等价创建命令为：
+
+```bash
+set -euo pipefail
+test -d /dev
+test -d /usr/local/PPU_SDK
+test -d /mnt/workspace/models/Magistral-Small-2506
+
+docker run -d \
+  --name flagrelease_thead_model_dl_20260915 \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v /usr/local/PPU_SDK:/usr/local/PPU_SDK \
+  -v /mnt/workspace/models:/models \
+  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
+  sleep infinity
+```
+
+评测容器仅绑定 `/mnt/workspace/models:/models`；它本身不执行 PPU 推理，不需要 `/dev` 或 SDK 挂载。
 
 ## Step 0：模型与采样参数核验
 
@@ -51,8 +84,25 @@ Magistral-Small-2506 是 reasoning 模型。初始 T-Head 评测按普通模型�
 关键算子配置：
 
 ```bash
+export XPU_VISIBLE_DEVICES=12,13
+export CUDA_VISIBLE_DEVICES=12,13
+export HIP_VISIBLE_DEVICES=12,13
+export VLLM_PLUGINS=fl
+export USE_FLAGGEMS=1
+export VLLM_FL_PREFER_ENABLED=true
+export FLAGGEMS_DB_URL=sqlite:///:memory:
 export VLLM_FL_FLAGOS_WHITELIST=arange_start,argmax,exponential_,lt_scalar,rand_like,randn,softmax,softmax_out,where_self,where_self_out,attention_backend
 export VLLM_FL_OOT_BLACKLIST=silu_and_mul,rms_norm,rotary_embedding
+export VLLM_CACHE_ROOT=/models/_vllm_cache/magistral-nv8-gpu12-13
+export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/magistral-nv8-gpu12-13/torchinductor
+export TRITON_CACHE_DIR=/models/_vllm_cache/magistral-nv8-gpu12-13/triton
+export VLLM_FL_TRITON_CACHE_ROOT=/models/_vllm_cache/magistral-nv8-gpu12-13/triton
+```
+
+正式服务日志：
+
+```text
+/models/_serve_logs/Magistral-Small-2506-mistralfmt-nv8-restored-noprefix-nochunk-20260918-gpu12-13.log
 ```
 
 日志确认 `attention_backend` 使用 FlagOS；`rms_norm`、`silu_and_mul`、`rotary_embedding` 避开替换。这三类算子分别影响归一化尺度、MLP 门控和位置信息，长推理链会放大逐层误差。

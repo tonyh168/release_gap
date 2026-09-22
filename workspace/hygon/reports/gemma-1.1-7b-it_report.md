@@ -49,19 +49,19 @@
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --security-opt label=disable --group-add video --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro \
   --name flagos-hygon-gemma-1.1-7b-it \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
 
 ```bash
 export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk-26.04-DCC2602-0317
-export HIP_PATH=/opt/dtk-26.04-DCC2602-0317/hip
+export ROCM_PATH=/opt/dtk
+export HIP_PATH=/opt/dtk/hip
 export HSA_PATH=/opt/dtk/hsa
 export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
 export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
@@ -70,8 +70,8 @@ export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/gemma-1.1-7b-it
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/day0_logs/gemma-1.1-7b-it-enabled-ops-20260915-oot-disabled-final-v2.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/gemma-1.1-7b-it
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,addmm_out,arange_start,argmax,broadcast_to,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 export VLLM_FL_OOT_BLACKLIST=silu_and_mul
 export VLLM_FL_OOT_ENABLED=0

@@ -13,7 +13,7 @@
 
 ## 定位
 
-- **部署侧根因是同批统一的编译器路径**：必须显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`；只用 `HIP_VISIBLE_DEVICES` 控卡，不设置 `ROCR_VISIBLE_DEVICES`（后者会让 `torch.cuda.is_available()` 变 `False`）。
+- **部署侧根因是同批统一的编译器路径**：必须显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`；只用 `HIP_VISIBLE_DEVICES` 控卡，不设置 `ROCR_VISIBLE_DEVICES`（后者会让 `torch.cuda.is_available()` 变 `False`）。
 - **不存在 Phi 128K 那样的超大生成窗口问题**：本模型 `max_model_len=4096`，标准评测自动得到 `max_tokens=2048`，耗时与输出形态正常。
 - **主要风险是 50 题样本量过小导致的统计方差**：相对退化 `11.76%` 超过 5% 门限，但绝对差 `-4.00` 个百分点 = `2.00` 题，正好等于 50 题噪声阈值上限，因此按小样本容忍规则判达标。
 - **不能宣称逐题严格对齐**：仓库只有 NV 记录分数，没有 NV 原始逐题预测、prompt 和评测产物，只能确认相对记录值在小样本容忍规则下达标。
@@ -38,8 +38,8 @@ shm-size: 64 GiB
 1. 使用统一 Hygon 新镜像；
 2. 使用 `HIP_VISIBLE_DEVICES=4`，不设置 `ROCR_VISIBLE_DEVICES`；
 3. 固定 `TRITON_ATTN`、BF16、TP=1 和 eager 模式；
-4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18`（失败尝试：不设置时同批服务触发 Triton/FlagGems 编译问题）；
-5. 使用独立 Triton 缓存与算子记录文件（`enabled_ops_retry-clang18-20260917.txt`）；
+4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`（失败尝试：不设置时同批服务触发 Triton/FlagGems 编译问题）；
+5. 使用独立 Triton 缓存目录；
 6. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond 50 题；
 7. 使用 `accuracy_compare.py` 与 NV 记录值比较，并按 50 题小样本噪声规则判定。
 
@@ -47,7 +47,6 @@ shm-size: 64 GiB
 
 ```text
 /public-flash/models/release_run_logs/SOLAR-10.7B-Instruct-v1.0/serve_retry-clang18-20260917.log
-/public-flash/models/release_run_logs/SOLAR-10.7B-Instruct-v1.0/enabled_ops_retry-clang18-20260917.txt
 ```
 
 评测配置与命令：
@@ -157,29 +156,29 @@ python3 fast_gpqa.py \
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video --group-add render \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video --group-add render \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
   -v /opt/hyhal:/opt/hyhal:ro \
   --name flagrelease-solar-10p7b \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk-26.04-DCC2602-0317/env.sh
+source /opt/dtk/env.sh
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk-26.04-DCC2602-0317/aillvm/bin/clang-18
+export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/release_run_logs/triton_cache/SOLAR-10.7B-Instruct-v1.0
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/release_run_logs/SOLAR-10.7B-Instruct-v1.0/enabled_ops_retry-clang18-20260917.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/SOLAR-10.7B-Instruct-v1.0
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 vllm serve /models/flagrelease/fixes_models/SOLAR-10.7B-Instruct-v1.0 \
   --served-model-name SOLAR-10.7B-Instruct-v1.0 \
   --dtype bfloat16 \

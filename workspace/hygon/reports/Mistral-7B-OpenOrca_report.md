@@ -46,7 +46,7 @@ shm-size: 64 GiB
 1. 使用统一 Hygon 新镜像和单卡 GPU3；
 2. 保留历史失败报告的 26 项 FlagGems 白名单（不新增、不删减）；
 3. 固定 `TRITON_ATTN`、BF16、TP=1 和 eager 模式；
-4. 使用独立 Triton 缓存目录与算子记录文件（`Mistral-7B-OpenOrca-enabled-ops-20260914-173759-exact-md-final.txt`）；
+4. 使用独立 Triton 缓存目录；
 5. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond **全量 198 题**；
 6. 记录 runaway 数量，并与 NV 记录值按同一比较脚本判定。
 7. 环境变量沿用本机实测的 DTK/FlagOS 组合（`DTK_HOME`/`ROCM_PATH`/`HIP_PATH`/`HSA_PATH`/`DEVICE_LIB_PATH`/`TRITON_HIP_CLANG_PATH` + `GEMS_VENDOR=hygon` + `VLLM_PLUGINS=fl` + spawn + 7200s 超时）；未显式设置 `VLLM_FL_OOT_ENABLED`、`VLLM_FL_OOT_BLACKLIST`、`VLLM_FL_FLAGOS_BLACKLIST`，沿用镜像默认 OOT 行为。
@@ -126,14 +126,14 @@ shm-size: 64 GiB
 ### 二、容器创建（宿主机执行）
 
 ```bash
-docker run --init -it --net=host --ipc=host \
-  --security-opt seccomp=unconfined --group-add video \
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
   -v /public-flash/models:/models \
   -v /opt/hyhal:/opt/hyhal:ro \
   --name day0-mistral-7b-openorca \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
-  /bin/bash
+  bash -lc 'sleep infinity'
 ```
 
 ### 三、启动服务（容器内执行）
@@ -141,8 +141,8 @@ docker run --init -it --net=host --ipc=host \
 ```bash
 source /opt/dtk/env.sh
 export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk-26.04-DCC2602-0317
-export HIP_PATH=/opt/dtk-26.04-DCC2602-0317/hip
+export ROCM_PATH=/opt/dtk
+export HIP_PATH=/opt/dtk/hip
 export HSA_PATH=/opt/dtk/hsa
 export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
 export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
@@ -152,8 +152,8 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/Mistral-7B-OpenOrca
-export FLAGGEMS_ENABLE_OPLIST_PATH=/models/day0_logs/Mistral-7B-OpenOrca-enabled-ops-20260914-173759-exact-md-final.txt
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-7B-OpenOrca
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 vllm serve /models/Mistral-7B-OpenOrca \
   --served-model-name Mistral-7B-OpenOrca \

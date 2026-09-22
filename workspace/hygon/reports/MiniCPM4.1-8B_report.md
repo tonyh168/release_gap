@@ -76,7 +76,20 @@ thinking 模型的输出窗口和 Chat API 特殊 token 应按模型 README 与�
 # CONTAINER_DEVS: --security-opt seccomp=unconfined --security-opt label=disable --device=/dev/kfd --device=/dev/dri --shm-size=64g --group-add=video -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
 ```
 
-### 二、容器配置（已运行实例）
+### 二、容器创建（宿主机执行）
+
+```bash
+docker run --init -d --net=host --ipc=host \
+  --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
+  --device=/dev/kfd --device=/dev/dri --shm-size=64g \
+  -v /public-flash/models:/models \
+  -v /opt/hyhal:/opt/hyhal:ro \
+  --name day0-minicpm4-1-8b \
+  harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
+  bash -lc 'sleep infinity'
+```
+
+### 三、容器配置（已运行实例）
 
 ```text
 name: day0-minicpm4-1-8b
@@ -94,12 +107,12 @@ group: video
 
 这是现有容器配置留档，**不要**在 GPU4/端口8002已被占用时重复创建同名服务。
 
-### 三、启动服务（容器内进程）
+### 四、启动服务（容器内进程）
 
 ```bash
 export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk-26.04-DCC2602-0317
-export HIP_PATH=/opt/dtk-26.04-DCC2602-0317/hip
+export ROCM_PATH=/opt/dtk
+export HIP_PATH=/opt/dtk/hip
 export HSA_PATH=/opt/dtk/hsa
 export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
 export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
@@ -109,7 +122,8 @@ export HIP_VISIBLE_DEVICES=4
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
-export VLLM_FL_TRITON_CACHE_ROOT=/models/day0_logs/triton_cache/MiniCPM4.1-8B
+export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/MiniCPM4.1-8B
+mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange,argmax,broadcast_to,copy,cos,cumsum,div,expand,index,le,lt,masked_fill,rand_like,randn,reciprocal,rsub,scatter,sin,softmax,sub,sum,to,where
 
 /usr/bin/python3 /usr/local/bin/vllm serve /models/MiniCPM4.1-8B \

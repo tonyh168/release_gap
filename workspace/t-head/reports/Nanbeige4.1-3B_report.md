@@ -42,35 +42,85 @@
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 81
 # SCORE_FLAGOS: 80
-# CONTAINER_DEVS: --privileged --shm-size=512g -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models
+# HOST_PPU_SDK_ROOT_DEFAULT: /usr/local/PPU_SDK
+# HOST_MODEL_ROOT_DEFAULT: /mnt/workspace/models
+# CONTAINER_PPU_SDK_ROOT: /usr/local/PPU_SDK
+# CONTAINER_MODEL_ROOT: /models
+# CONTAINER_DEVS: --network host --ipc host --privileged --shm-size=512g -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models
 ```
 
-### 二、容器创建（宿主机执行）
+### 二、推理容器创建（宿主机执行）
+
+原始服务容器为 `flagrelease_thead_nanbeige4p1_3b_20260917`。以下使用独立复现名称；执行前确认 GPU14 和端口 `18087` 空闲。
 
 ```bash
-docker run --init -it --net=host --ipc=host --privileged --shm-size=512g \
-  -v /dev:/dev -v /usr/local/PPU_SDK:/usr/local/PPU_SDK -v /mnt/workspace/models:/models \
-  --name flagos-t-head-nanbeige4.1-3b \
-  harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100 \
-  /bin/bash
+set -euo pipefail
+
+IMAGE="harbor.baai.ac.cn/flagrelease-public/qwen3.8-27b-pp001-gems0.0-treenone-cxnone-plugin0.2.0-vllm0.24.0-cp312-pt210-hggc130-x64-1.3.2-d7f5a2:202608141100"
+CONTAINER="flagrelease_thead_nanbeige4p1_3b_repro"
+MODEL_DIR="Nanbeige4.1-3B"
+HOST_PPU_SDK_ROOT="${HOST_PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+HOST_MODEL_ROOT="${HOST_MODEL_ROOT:-/mnt/workspace/models}"
+
+test -d /dev
+test -d "$HOST_PPU_SDK_ROOT"
+test -d "$HOST_MODEL_ROOT/$MODEL_DIR"
+test -f "$HOST_MODEL_ROOT/$MODEL_DIR/config.json"
+mkdir -p "$HOST_MODEL_ROOT/_vllm_cache" "$HOST_MODEL_ROOT/_serve_logs"
+test -w "$HOST_MODEL_ROOT/_vllm_cache"
+test -w "$HOST_MODEL_ROOT/_serve_logs"
+
+docker run -d \
+  --name "$CONTAINER" \
+  --network host \
+  --ipc host \
+  --privileged \
+  --shm-size=512g \
+  -v /dev:/dev \
+  -v "$HOST_PPU_SDK_ROOT:/usr/local/PPU_SDK" \
+  -v "$HOST_MODEL_ROOT:/models" \
+  "$IMAGE" \
+  sleep infinity
 ```
 
-### 三、启动服务（容器内执行）
+宿主机路径可通过 `HOST_PPU_SDK_ROOT`、`HOST_MODEL_ROOT` 覆盖；容器内统一使用 `/usr/local/PPU_SDK`、`/models`。
+
+### 三、启动服务（宿主机执行）
 
 ```bash
+docker exec -d flagrelease_thead_nanbeige4p1_3b_repro bash -lc '
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/models}"
+MODEL_PATH="${MODEL_PATH:-${MODEL_ROOT}/Nanbeige4.1-3B}"
+CACHE_ROOT="${CACHE_ROOT:-${MODEL_ROOT}/_vllm_cache/nanbeige4p1-3b-min4-gpu14}"
+LOG_ROOT="${LOG_ROOT:-${MODEL_ROOT}/_serve_logs}"
+PPU_SDK_ROOT="${PPU_SDK_ROOT:-/usr/local/PPU_SDK}"
+TARGET_DEVICES="${TARGET_DEVICES:-14}"
+
+test -f "${MODEL_PATH}/config.json"
+test -d "${PPU_SDK_ROOT}/CUDA_SDK"
+mkdir -p "${CACHE_ROOT}/torchinductor" "${CACHE_ROOT}/triton" "${LOG_ROOT}"
+test -w "${CACHE_ROOT}"
+test -w "${LOG_ROOT}"
+
+export XPU_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export CUDA_VISIBLE_DEVICES="${TARGET_DEVICES}"
+export HIP_VISIBLE_DEVICES="${TARGET_DEVICES}"
 export VLLM_PLUGINS=fl
 export USE_FLAGGEMS=1
 export VLLM_FL_PREFER_ENABLED=true
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,cat,copy_,cos,exponential_,fill_scalar_,index,lt_scalar,mul,pow_scalar,rand_like,reciprocal,scatter_,sin,softmax,softmax_out,sub,true_divide,true_divide_,where_self,where_self_out,zero_,zeros,attention_backend,rms_norm,silu_and_mul,rotary_embedding
-export VLLM_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-gpu14
-export TORCHINDUCTOR_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-gpu14/torchinductor
-export TRITON_CACHE_DIR=/models/_vllm_cache/nanbeige4p1-3b-gpu14/triton
-export VLLM_FL_TRITON_CACHE_ROOT=/models/_vllm_cache/nanbeige4p1-3b-gpu14/triton
-export PPU_HOME=/usr/local/PPU_SDK
-export CUDA_HOME=/usr/local/PPU_SDK/CUDA_SDK
+export VLLM_FL_FLAGOS_WHITELIST=attention_backend,rms_norm,silu_and_mul,rotary_embedding
+export VLLM_CACHE_ROOT="${CACHE_ROOT}"
+export TORCHINDUCTOR_CACHE_DIR="${CACHE_ROOT}/torchinductor"
+export TRITON_CACHE_DIR="${CACHE_ROOT}/triton"
+export VLLM_FL_TRITON_CACHE_ROOT="${CACHE_ROOT}/triton"
+export PPU_HOME="${PPU_SDK_ROOT}"
+export CUDA_HOME="${PPU_SDK_ROOT}/CUDA_SDK"
 export HF_ENDPOINT=https://hf-mirror.com
-/usr/local/bin/vllm serve /models/Nanbeige4.1-3B \
+
+exec /usr/local/bin/vllm serve "${MODEL_PATH}" \
   --served-model-name Nanbeige4.1-3B \
   --host 0.0.0.0 \
   --port 18087 \
@@ -79,5 +129,20 @@ export HF_ENDPOINT=https://hf-mirror.com
   --max-model-len 32768 \
   --gpu-memory-utilization 0.85 \
   --trust-remote-code \
-  --enforce-eager
+  --enforce-eager \
+  > "${LOG_ROOT}/Nanbeige4.1-3B-repro-min4-gpu14-port18087.log" 2>&1
+'
+```
+
+`nanbeige4p1-3b-min4-gpu14` 是默认缓存命名空间，不要求目标机预先存在；命令会创建它，也允许通过 `CACHE_ROOT` 覆盖。
+
+容器内覆盖变量需以 `docker exec -e CACHE_ROOT=/models/_vllm_cache/新运行名 -e TARGET_DEVICES=实际设备号 ...` 传入；宿主机变量不自动透传。并行启动还需另选空闲端口和独立日志名。
+
+### 四、启动后核验
+
+```bash
+curl -fsS http://127.0.0.1:18087/health
+curl -fsS http://127.0.0.1:18087/v1/models
+docker exec flagrelease_thead_nanbeige4p1_3b_repro \
+  bash -lc "pgrep -af '^/usr/local/bin/python3.12 /usr/local/bin/vllm serve /models/Nanbeige4.1-3B'; ppu-smi"
 ```

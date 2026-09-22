@@ -56,6 +56,29 @@
 - Runaway：6/50，文档题号 `8, 24, 26, 29, 33, 42`。
 - 限定：本轮属于接近 5% 门限的边界通过，且有 6 题 runaway；未执行 MMStar 和性能验收。
 
+## VLLM_PLUGINS=fl 复测
+
+在启动块显式增加 `export VLLM_PLUGINS=fl` 后，按相同 GPQA 50 题口径复测。由于首轮使用的逻辑设备 12/13 当时被其他服务占用，本轮使用空闲逻辑设备 6/7，因此该结果不能只归因于环境变量差异。
+
+| 项目 | 首轮 | 复测 |
+|---|---:|---:|
+| 逻辑设备 | `12,13` | `6,7` |
+| GPQA | `24.00%` | `20.00%` |
+| NV | `25.00%` | `25.00%` |
+| 相对退化 | `4.00%` | `20.00%` |
+| Runaway | `6` | `7` |
+| 判定 | 通过 | 不通过 |
+
+复测文件：
+
+```text
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/gpqa50.json
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/verdict.json
+/public-flash/models/release_run_logs/Phi-3-vision-128k-instruct/rerun_vllm_plugins_fl/gpqa50/eval.log
+```
+
+`accuracy_compare.py` 复测退出码为 `1`：当前 `20.00%`、NV `25.00%`、相对退化 `20.00%`，超过 5% 容差。首轮日志已显示平台插件自动激活，因此本轮不能证明显式 `VLLM_PLUGINS=fl` 是唯一原因；发布字段仍以首轮通过配置为准。
+
 verdict.json 核心内容：
 
 ```json
@@ -91,21 +114,30 @@ Ascend 上部署长上下文 VLM 时，验收必须分开服务健康、纯文�
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 25
 # SCORE_FLAGOS: 24
-# CONTAINER_DEVS: --privileged --shm-size=64g -v /public-flash/models:/models -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /etc/ascend_install.info:/etc/ascend_install.info
+# CONTAINER_DEVS: --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g -e ASCEND_VISIBLE_DEVICES=12,13 -e ASCEND_RT_VISIBLE_DEVICES=12,13 -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 -v /public-flash/models:/models -v /data/flagos-workspace/microsoft/Phi-3-vision-128k-instruct:/flagos-workspace -v /usr/local/Ascend/driver:/usr/local/Ascend/driver -v /usr/local/dcmi:/usr/local/dcmi -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi -v /usr/local/sbin:/usr/local/sbin -v /etc/ascend_install.info:/etc/ascend_install.info
 ```
 
 ### 二、容器创建（宿主机执行）
 
+节点实际部署依赖 Docker 的默认 Ascend runtime；下列命令显式写出 `--runtime=ascend`，行为等价且可跨节点复现。
+
 ```bash
-docker run --init -it --net=host --ipc=host --privileged --shm-size=64g \
+docker run -d --restart unless-stopped --runtime=ascend --network=host --ipc=host --privileged --security-opt=label=disable --shm-size=64g \
+  -e ASCEND_VISIBLE_DEVICES=12,13 \
+  -e ASCEND_RT_VISIBLE_DEVICES=12,13 \
+  -e PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256 \
   -v /public-flash/models:/models \
+  -v /data/flagos-workspace/microsoft/Phi-3-vision-128k-instruct:/flagos-workspace \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
   -v /usr/local/dcmi:/usr/local/dcmi \
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+  -v /usr/local/sbin:/usr/local/sbin \
   -v /etc/ascend_install.info:/etc/ascend_install.info \
-  --name flagos-ascend-phi-3-vision-128k-instruct \
+  --name Phi-3-vision-128k-instruct_flagos \
   harbor.baai.ac.cn/flagrelease-public/flagrelease_ascend_vllm020plugin_base:no_vllm_ascend \
-  /bin/bash
+  sleep infinity
+
+docker exec -it Phi-3-vision-128k-instruct_flagos bash
 ```
 
 ### 三、启动服务（容器内执行）
