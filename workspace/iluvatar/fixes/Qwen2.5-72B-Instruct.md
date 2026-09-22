@@ -285,8 +285,9 @@ python3 accuracy_compare.py \
 [gen] 采用模型 generation_config.json 采样参数: {'temperature': 0.7, 'top_p': 0.8, 'top_k': 20, 'repetition_penalty': 1.05}
 ```
 
-**② evalscope 实际任务配置**（`outputs/gpqa_diamond/20260921_141433/configs/task_config.yaml`，
-这是**真正下发到推理请求**的参数，比日志打印更硬）：
+**② evalscope 实际任务配置**（`outputs/gpqa_diamond/20260921_141748/configs/task_config.yaml`，
+这是**正式 50 题那一轮**、**真正下发到推理请求**的参数，比日志打印更硬；
+4a 小样本那轮（`20260921_141433`）的值与此完全一致）：
 
 ```yaml
 eval_batch_size: 8
@@ -386,6 +387,101 @@ blacklist `sort,sort_stable,mm,addmm,broadcast_to`，超时 **60 分钟**）
 2. **`[gen] 采用模型 generation_config.json 采样参数:`** 行 —— 确认采样口径真的生效
    （temp 0.7 / top_p 0.8 / top_k 20 / rp 1.05），否则评测又变回贪心，分数不可用
 3. 尾部若无 `driver end` 而是 `FATAL` / `driver end (FAILED)` → 需人工介入
+
+---
+
+## 开启算子列表
+
+（本配置下 FlagGems **实际启用**的算子，共 **53** 个。）
+
+**数据来源**：容器内 `/tmp/flaggems_enable_oplist.txt`（2026-09-21 22:14 采集，2742 字节）。
+该文件**由 vllm-plugin-FL 自动写出**，不是手工下发的清单：
+
+- 写入方：`vllm_fl/worker/worker.py`（`flag_gems.enable(unused=<blacklist>, record=True, once=True, path=...)`，
+  **仅 rank 0 写**，避免 TP>1 时文件被截断/交错写坏）
+- 路径：环境变量 `FLAGGEMS_ENABLE_OPLIST_PATH`，默认即 `/tmp/flaggems_enable_oplist.txt`
+  （`vllm_fl/envs.py`）
+- 记录时机：FlagGems 在**去重后**把实际接管的算子逐个打出 `GEMS <OP>`（`[DEBUG] flag_gems.ops.<module>.<func>: GEMS <OP>`）
+
+取每行 `flag_gems.ops.<module>.<func>` 的 `<func>` 作为算子名，去重后 **53 个**。
+
+**采集命令**（容器内）：
+
+```bash
+grep -oE 'flag_gems\.ops\.[A-Za-z0-9_.]+' /tmp/flaggems_enable_oplist.txt \
+  | awk -F. '{print $NF}' | sort -u
+```
+
+按 `report_template.md`「### 四、开启算子列表」的要求，此处只放**裸 JSON 字符串数组**
+（不带 `"include":` 前缀、不带「替换算子数」、无注释）：
+
+```json
+[
+  "_unsafe_view",
+  "add",
+  "alias",
+  "arange_start",
+  "argmax",
+  "bitwise_or_tensor",
+  "cat",
+  "copy_",
+  "cos",
+  "cumsum_out",
+  "empty",
+  "eq_scalar",
+  "expand",
+  "expand_as",
+  "exponential_",
+  "fill_scalar_",
+  "flatten",
+  "full",
+  "gather",
+  "gt_scalar",
+  "index",
+  "le",
+  "lift_fresh",
+  "lt",
+  "lt_scalar",
+  "masked_fill_",
+  "mul",
+  "mul_",
+  "narrow",
+  "ones",
+  "ones_like",
+  "pow_scalar",
+  "rand_like",
+  "randn",
+  "reciprocal",
+  "rsub_scalar",
+  "scalar_tensor",
+  "scatter_",
+  "scatter_add_0",
+  "sin",
+  "softmax",
+  "softmax_out",
+  "sub",
+  "sub_",
+  "to_copy",
+  "true_divide",
+  "true_divide_",
+  "unbind",
+  "unsqueeze",
+  "where_self",
+  "where_self_out",
+  "zero_",
+  "zeros"
+]
+```
+
+> 📌 **这是"本配置下实际启用"的清单，不是手工下发的白名单。**
+> 本模型**未设置白名单**（`VLLM_FL_FLAGOS_WHITELIST` 为空），只设了黑名单
+> `VLLM_FL_FLAGOS_BLACKLIST=sort,sort_stable,mm,addmm,broadcast_to`。
+> 插件优先级为 `WHITELIST > BLACKLIST > 配置文件`，故走的是 blacklist 分支 →
+> 该清单 = **除这 5 个黑名单算子外，FlagGems 实际接管的全部算子**。
+> 因此它反映的是**运行时真实接管情况**，比手写白名单更可靠。
+>
+> ⚠️ 与失败报告里的「算子白名单」不是一回事：失败报告写的是**下发**的 include 列表，
+> 这里是**实际生效**的算子。两者数量不同属正常。
 
 ---
 
