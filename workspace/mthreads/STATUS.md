@@ -1,9 +1,11 @@
 # Mthreads 模型修复状态总览
 
 > 更新：2026-09-21
-> ✅ **50 题筛查已跑完**（4 个模型，2026-09-20 17:21–20:08 跑分，2026-09-21 出判定）——
-> **3 个达标 / 1 个不达标**，明细见下「📊 50 题筛查结果」
-> ⚠️ 4 个模型的服务与 eval 容器**仍在 `mthreads-25` 上运行**；下一步是 **198 题全量定稿**
+> ✅ **50 题筛查 4 个模型全部出分，4 个达标** —— 明细见下「📊 50 题筛查结果」
+> 🔬 **reka-flash-3 重复性实验已完成**：5 轮同配置评测落成 `50,50 | 58,58,58` 两簇，均值 54.8%，
+> **分簇原因未查明**（老容器已停，未继续追查）；判定按 metax 裁定的 NV 原生 **53.54** 判**达标**。
+> 见下「🔬 reka-flash-3 重复性实验」
+> ℹ️ Phi-4 / LFM2.5 / Qwen3.5 三个服务容器**已停掉释放显存**（2026-09-21）；下一步是 **198 题全量定稿**
 >
 > 机型：MTT S5000 × 8（单卡 80GB） | 宿主机：`mthreads-25` / `mthreads-27`（`mthreads-26` 当前不可用）
 > 镜像：`harbor.baai.ac.cn/flagrelease-public/flagrelease_mthreads-gmi_vllm024plugin_base:08281629`
@@ -24,25 +26,31 @@
 | 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/{eval_scripts,evalscope-datasets}` |
 | **4 个一对一 eval 容器 + context.yaml** | ✅ **已建好并验收**（详见 [[EVAL_INFRA]]） |
 | **评测参数定稿** | ✅ 见 [[EVAL_SETTINGS]]（温度/top_p/top_k/is-think 总表） |
-| **50 题筛查跑分** | ✅ **已完成** —— 3 达标 / 1 不达标，见下「📊 50 题筛查结果」 |
-| 198 题全量定稿 | ⬜ **下一步** —— 环境与服务均已就绪，直接改 `--limit 0` 重跑 |
+| **50 题筛查跑分** | ✅ **已完成** —— **4 个达标**（reka 按 metax 裁定的 53.54 基准判达标），见下「📊 50 题筛查结果」 |
+| 198 题全量定稿 | ⬜ **下一步** —— reka 新容器（`-r2`/`-r3`/`-r4`）在跑；另 3 个需先 `docker start` 恢复容器 |
 
 ## 📊 50 题筛查结果（2026-09-20 跑完，2026-09-21 出判定）
 
-> 逐模型的完整信息在 `reports/<模型名>.md`（含发布字段），过程记录在 `fixes/<模型名>.md`。
+> 逐模型的完整信息在 `reports/<模型名>_report.md`（含发布字段），过程记录在 `fixes/<模型名>.md`。
 > 判定命令：`accuracy_compare.py --v2 gpqa_50.json --nv-baseline <模型名> --metric gpqa_diamond`，
 > 产物 `verdict_50.json` 与 `gpqa_50.json` 同目录（`/datapool/flagrelease/release_run_logs/<模型名>/`）。
 
 | 模型 | 得分 | NV 基线 | 相对退化 | 判定 | runaway | 截断 | 报告 |
 |------|:----:|:-------:|:--------:|:----:|:-------:|:----:|------|
-| **Phi-4-reasoning-plus** | **58.0%**（29/50） | 46 | **−26.09%** | ✅ 退出码 0 | 0 | 无 | [[reports/Phi-4-reasoning-plus]] |
-| **LFM2.5-1.2B-Thinking** | **32.0%**（16/50） | 29.0 | **−10.34%** | ✅ 退出码 0 | 0 | 无 | [[reports/LFM2.5-1.2B-Thinking]] |
-| **Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled** | **78.0%**（39/50） | 75 | **−4.00%** | ✅ 退出码 0 | 1（idx 7） | 无 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
-| reka-flash-3 | 50.0%（25/50） | 59 / **53.54**※ | +15.25% / **−6.61%** | ❌ 退出码 1 | 0 | 无 | —（不达标，见 [[fixes/reka-flash-3]]） |
+| **Phi-4-reasoning-plus** | **58.0%**（29/50） | 46 | **−26.09%** | ✅ 退出码 0 | 0 | 无 | [[reports/Phi-4-reasoning-plus_report]] |
+| **LFM2.5-1.2B-Thinking** | **32.0%**（16/50） | 29.0 | **−10.34%** | ✅ 退出码 0 | 0 | 无 | [[reports/LFM2.5-1.2B-Thinking_report]] |
+| **Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled** | **78.0%**（39/50） | 75 | **−4.00%** | ✅ 退出码 0 | 1（idx 7） | 无 | [[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
+| **reka-flash-3** | **54.8%**（5 轮均值，区间 50.0–58.0%） | **53.54**※ | **−2.35%**（反超 1.26pt） | ✅ **达标** | 0 | 无 | [[reports/reka-flash-3_report]] |
 
-> ※ **reka-flash-3 的基准按 metax 裁定改用 NV 原生实测 53.54**（表内 59 出自 NV 失败报告、口径不符）。
-> 换成 53.54 后相对退化为 −6.61%，**仍超 5% 容差**——**两种基准都不达标**，且这是**前 50 题偏易**的口径
-> （metax 自己 v6 前 50 题 56.00% → 全量仅 54.04%），全量大概率更低。
+> ※ **reka-flash-3 的基准采用 metax 的裁定：NV 原生 198 题实测 53.54%**，
+> **不用** `nv_baseline.yaml` 表内的 59。理由有三（完整版见 [[reports/reka-flash-3_report]] 的「基准取值」节）：
+> ① 53.54% 是 NV 原生（H20 + vLLM 官方镜像 + FA3，**无 plugin**，198 题）亲手复现值，与摩尔口径可比；
+> ② 59.0 出自 NV 失败报告，而**同一份报告**记录 NV 硬件上 plugin-FL 同样造成 12pt 退化（60→48），
+> 说明该模型对 plugin-FL 敏感是**跨平台共性**，59.0 与本平台不可比；
+> ③ 与 `SOLAR-10.7B-Instruct-v1.0` 同类，处置一致：**基线表取值与实测不符时以实测为准**。
+>
+> ⚠️ **reka 这一行的 54.8% 是 5 轮均值，不是单轮成绩**：5 轮配置完全相同，
+> 却落成 `50,50 | 58,58,58` **两簇**（分簇原因未查明，老容器已停），见下「🔬 reka-flash-3 重复性实验」。
 
 **三项必查（全部通过）**：
 
@@ -59,17 +67,105 @@
 - **LFM2.5-1.2B-Thinking** —— 与 **iluvatar 逐位一致**（同为 32.0% vs 29.0、退出码 0），跨平台可复现。
 - **Qwen3.5-27B-Distilled** —— **摩尔的机会兑现了**：iluvatar 受 8192 上下文限制只拿到 70.0%（不达标），
   摩尔给到 32768 → **78.0% 达标**，反超基线 3pt。同模型同配置，**8pt 差距全部来自上下文长度**。
-- **reka-flash-3** —— 唯一不达标。与 metax v6 **同题对照**：共同答对 21 题，metax 独对 7 题（13/22/23/26/28/35/43）、
-  摩尔独对 4 题（17/36/45/46），净差 3 题。采样参数已确认生效（metax 的根因在摩尔侧**已排除**），
-  7:4 的不对称在 temp=0.6 的采样抖动下**还不足以定论真凶**，需全量 198 题才能判死。
+- **reka-flash-3** —— ✅ **达标（54.8% vs 53.54，基准用 metax 裁定的 NV 原生实测值）**。
+  但过程曲折：**5 轮同配置评测落成「两簇」（50,50 | 58,58,58），分簇原因未查明**（老容器已停）。
+  50 题口径噪声达 8pt，**定稿须走 198 题全量**。详见下节。
 
 **⚠️ 一个待解释的观察（不影响达标）**：Qwen3.5 **实际只触达 `silu_and_mul` 一个 FlagGems 算子**，
 白名单里另外两个（`rms_norm`、`rotary_embedding`）**根本没走 plugin-FL 的 dispatch**
 （`serve.log` 无对应 `using` 行 + 容器 `/tmp/flaggems_enable_oplist.txt` 只有 3 行，另三个模型是 11 行）。
 即**该模型算子替换的覆盖面比白名单窄**，将来若靠增删算子调精度，改这两项是无效操作。
 
-> **「开启算子列表」一律以容器 `/tmp/flaggems_enable_oplist.txt` 的实测为准**（注意文件名是 `oplist` 连写），
-> **不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。逐模型实测名单见 `fixes/*.md` 与 `reports/*.md`。
+> **「开启算子列表」一律以容器 `/tmp/flaggems_enable_oplist.txt` 的实测为准**（⚠️ 文件名是 `oplist` 连写，
+> 写成 `op_list` 找不到文件），**不要照抄白名单**——两者可能不一致（Qwen3.5 就是活例）。
+> 逐模型实测名单见 `fixes/*.md` 与 `reports/*_report.md`。
+
+## 🔬 reka-flash-3 重复性实验（⚠️ 出现「两簇」，未能归因，2026-09-21）
+
+**目的**：判明「摩尔 50.0% vs metax v6 56.0%」的 6pt 差距**是真实退化还是采样抖动**。
+
+**结论：5 轮同配置评测落成「两簇」，分簇原因未查明 —— 50 题口径不足以定案。**
+
+### 结果：两簇
+
+| 轮次 | 服务容器 / 服务进程 | 得分 |
+|------|---------------------|:----:|
+| 原轮 · 9/20 | `flagrelease-fix-reka-flash-3` / 9-20 15:13 启动 | **50.0%**（25/50） |
+| r1 · 9/21 | **同一容器、同一进程**（跑满 26h） | **50.0%**（25/50） |
+| r2 · 9/21 | `...-r2` / 9-21 14:22 启动 | **58.0%**（29/50） |
+| **r3** · 9/21 | `...-r3` / 9-21 14:22 启动 | **58.0%**（29/50） |
+| r4 · 9/21 | `...-r4` / 9-21 14:22 启动 | **58.0%**（29/50） |
+
+```
+老服务进程（9-20 启动）  : 50.0% , 50.0%     ← 同一进程跑两次
+新服务进程（9-21 启动）×3 : 58.0% , 58.0% , 58.0%
+```
+
+**均值 54.8%**（与 metax v6 全量 54.04% 几乎重合）。
+
+### 为什么这不是一句「采样抖动」能解释的
+
+- **不像纯随机**：若单轮成功概率 p≈0.54，5 个样本恰好落成 `25,25,29,29,29`
+  （前两个同分、后三个同分）的概率量级约 **10⁻⁶**。分簇太整齐。
+- **也不是确定性种子**：同进程两次**逐题不可复现** —— 共对仅 18/50、**14 题翻转**、
+  抽出选项仅 **27/50** 相同；全链路**没有任何 `--seed`**
+  （`fast_gpqa.py` / evalscope / `vllm serve` 都不传）。
+- **簇内噪声同样大**：新容器三组间独对**双向对称**（4:4、6:6、7:7），
+  但两轮间**28~34% 的题翻转正误**，总分摆动 **8pt**。
+- **跨簇偏斜**：原轮 vs r3 独对 **3:7**（偏斜），与两簇现象一致。
+- **跨平台在 58% 簇上是对称的**：r3 vs metax v6 独对 **5:6** → 该簇上摩尔与 metax 无系统性差距。
+
+**已排查、均排除**：引擎配置差异（两边 `GPU KV cache size: 231,376 tokens` 一致）、
+响应长度分布（中位 ~14–15k 字符，一致）、`truncation_detected`、`runaway_count`（全为 0）、
+`[gen]` 采样参数（逐轮一致）。
+
+**处置**：老容器 `flagrelease-fix-reka-flash-3` **已于 2026-09-21 停止**（`docker stop`，保留未删），
+**未继续追查根因**（发起人决定）。
+
+### 判定：达标（基准采用 metax 裁定的 53.54）
+
+| 基准 | 54.8% 的判定 |
+|------|--------------|
+| **NV 原生 198 题实测 53.54%（采用）** | 反超 1.26pt（相对 +2.35%）→ ✅ **达标** |
+| ~~表内 59（不采用）~~ | ~~退化 7.1%~~ —— 该值与「198 题、无 plugin」口径不符，裁定不用 |
+
+> 基准取值理由（沿自 metax 的裁定）：53.54% 是 NV 原生（H20 + vLLM 官方镜像 + FA3，无 plugin，
+> 198 题）亲手复现值；59.0 出自 NV 失败报告，而**同一份报告**记录 NV 硬件上 plugin-FL
+> 同样造成 12pt 退化（60→48）—— 该模型对 plugin-FL 敏感是**跨平台共性**，故 59.0 不可比。
+> 完整论述见 [[reports/reka-flash-3_report]] 的「基准取值」节。
+>
+> ⚠️ **两个基准相差 5.5pt，而 50 题的噪声就有 8pt** —— 这正是必须把基准取值写死、不能并列的原因。
+
+### 影响：50 题口径不能用于本模型判定
+
+**28~34% 的题会在两轮间翻转正误，总分摆动 8pt ——噪声带宽比 5% 容差还宽。**
+
+- ❌ **不要用 50 题给 `do_sample=true` 的模型下结论**；
+- ✅ **定稿一律走 198 题全量**（样本量约大 4 倍，噪声按 √N 收缩）。
+
+> 与 metax 的教训互相印证：metax 也是「前 50 题 56.00% 不可外推 → 全量 54.04%」。
+> **两家都栽在 50 题口径上**，后续同类模型建议直接上全量。
+
+### 实验设置（4 组完全一致，唯一变量是采样随机性）
+
+| 项目 | 值 |
+|------|----|
+| 数据集 / 题数 | `gpqa_diamond` **50 题**（与 metax v6 前 50 题同题，可直接对照） |
+| 采样参数 | **reka 自带 gc：temp=0.6 / top_p=0.95 / top_k=1024**（4 组同一份，`[gen]` 行已逐组确认） |
+| thinking | `thinking_model: true`（`context.yaml`） |
+| 服务 | `--max-model-len 24576`（→ `max_tokens=16384`）、`--enforce-eager`、TP=1、`-gmu 0.9` |
+| 并发 | **显式 `--eval-batch-size 1`（跳过自动探测）** —— 受控实验必须固定同一值 |
+
+| 组 | 服务容器 | GPU | 端口 | eval 容器 | 输出目录 |
+|:--:|----------|:---:|:----:|-----------|----------|
+| r1 | `flagrelease-fix-reka-flash-3` | GPU2 | 8002 | `eval-reka-flash-3` | `release_run_logs/reka-flash-3/repeat-r1/` |
+| r2 | `flagrelease-fix-reka-flash-3-r2` | GPU0 | 8004 | `eval-reka-flash-3-r2` | `release_run_logs/reka-flash-3/repeat-r2/` |
+| r3 | `flagrelease-fix-reka-flash-3-r3` | GPU1 | 8005 | `eval-reka-flash-3-r3` | `release_run_logs/reka-flash-3/repeat-r3/` |
+| r4 | `flagrelease-fix-reka-flash-3-r4` | GPU3 | 8006 | `eval-reka-flash-3-r4` | `release_run_logs/reka-flash-3/repeat-r4/` |
+
+> 起跑 2026-09-21 14:26，4 组并行、互不拖慢（题均 ~200s，与原轮 212s 相当）。
+> ⚠️ **r1 是重跑**：原 2026-09-20 那一轮（`release_run_logs/reka-flash-3/gpqa_50.json`）是自动探测出的并发 1，
+> 本轮为「4 组调用完全一致」显式固定 `--eval-batch-size 1` 重跑；**原结果保留**，作第 5 个参考样本。
 
 ## 图例
 
@@ -110,7 +206,7 @@
 | AceReason-Nemotron-7B | mmlu 70.72 / math_500 95.2 | 📋 待开始 | 会话在服务启动前因 API 流式卡顿中断 |
 | Hermes-2-Pro-Llama-3-8B | gpqa_diamond 33 | 📋 待开始 | 权重下载命令超时 |
 | Ministral-3-14B-Instruct-2512 | gpqa_diamond 56 | 📋 待开始 | 容器准备未完成 |
-| Phi-4-reasoning-plus | gpqa_diamond 46 | ✅ 已达标 | **50 题筛查 58.0%（29/50），相对退化 −26.09%，退出码 0**。服务首跑即通（TP=1/GPU0/:8000，63s）。⚠ 198 题全量待跑；metax 建议的算子 A/B 未做（留白名单就已达标）。报告：[[reports/Phi-4-reasoning-plus]] |
+| Phi-4-reasoning-plus | gpqa_diamond 46 | ✅ 已达标 | **50 题筛查 58.0%（29/50），相对退化 −26.09%，退出码 0**。服务首跑即通（TP=1/GPU0/:8000，63s）。⚠ 198 题全量待跑；metax 建议的算子 A/B 未做（留白名单就已达标）。报告：[[reports/Phi-4-reasoning-plus_report]] |
 | Qwen2.5-7B-Instruct | gpqa_diamond 39.0 | 📋 待开始 | 会话连接中断 |
 | Qwen2.5-Coder-7B-Instruct | gpqa_diamond 27 | 📋 待开始 | 会话连接中断 |
 | aya-23-8B | gpqa_diamond 27 | 📋 待开始 | 容器准备未完成 |
@@ -136,11 +232,11 @@
 | DASD-4B-Thinking | gpqa_diamond 44.0 | 📋 待开始 | |
 | Dhanishtha-2.0-preview | mmlu 81.09 / math_500 68.6 | 📋 待开始 | |
 | GLM-4.7-Flash | gpqa_diamond 55 | 📋 待开始 | |
-| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | ✅ 已达标 | **50 题筛查 32.0%（16/50），相对退化 −10.34%，退出码 0** —— 与 **iluvatar 逐位一致**（同 32.0% vs 29.0）。服务首跑即通（35s），混合 SSM 无需特殊 attention-backend。⚠ 198 题全量待跑。报告：[[reports/LFM2.5-1.2B-Thinking]] |
+| LFM2.5-1.2B-Thinking | gpqa_diamond 29.0 | ✅ 已达标 | **50 题筛查 32.0%（16/50），相对退化 −10.34%，退出码 0** —— 与 **iluvatar 逐位一致**（同 32.0% vs 29.0）。服务首跑即通（35s），混合 SSM 无需特殊 attention-backend。⚠ 198 题全量待跑。报告：[[reports/LFM2.5-1.2B-Thinking_report]] |
 | Light-R1-14B-DS | mmlu 85.17 / math_500 93.2 | 📋 待开始 | |
 | Qwen3-4B-SafeRL | mmlu 81.39 / math_500 94.8 | 📋 待开始 | 另有 `float4_e2m1fn_x2` 崩溃记录 |
 | ZR1-1.5B | mmlu 50.54 / math_500 89.4 | 📋 待开始 | |
-| reka-flash-3 | gpqa_diamond 59（**裁定改用 53.54**） | ❌ 不达标 | **50 题筛查 50.0%（25/50）**：对表内 59 退化 **+15.25%**、对 NV 原生 53.54 退化 **−6.61%** —— **两种基准都超 5% 容差**（退出码 1）。采样参数**已确认生效**（`[gen]` 采用模型 gc 0.6/0.95/1024），metax 那条根因在摩尔侧**已排除**。与 metax v6 同题对照：共同答对 21，metax 独对 7 / 摩尔独对 4（净差 3 题），在 temp=0.6 抖动下不足以定论 → **需 198 题全量定性**。见 [[fixes/reka-flash-3]] |
+| reka-flash-3 | gpqa_diamond 59（**裁定改用 53.54**） | ✅ 已达标 | **5 轮均值 54.8% vs NV 原生 53.54（反超 1.26pt）**。⚠️ 5 轮同配置评测落成两簇（`50,50 \| 58,58,58`），**分簇原因未查明**（老容器已停）。基准采用 **metax 裁定的 NV 原生 198 题实测 53.54**，不用表内 59（口径不符，理由见「📊 50 题筛查结果」注）。采样参数一直生效、算子侧无需改动（metax 那条根因在摩尔侧**从未发生**）。⚠ 50 题口径噪声达 8pt，**定稿必须走 198 题全量**。报告：[[reports/reka-flash-3_report]] |
 | rnj-1-instruct | gpqa_diamond 37 | 📋 待开始 | |
 
 ## 🌀 生成失控 / ⏳ 超评测预算（2）
@@ -172,7 +268,7 @@
 | DeepSeek-R1-Distill-Qwen-32B | gpqa_diamond 37 | 📋 待开始 | |
 | Phi-3-vision-128k-instruct | gpqa_diamond 25.0 | 📋 待开始 | 多模态 VLM，需图像输入支持 |
 | Qwen3-30B-A3B-Instruct-2507 | gpqa_diamond 62 | 📋 待开始 | |
-| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | ✅ 已达标 | **50 题筛查 78.0%（39/50），相对退化 −4.00%，退出码 0**（1 个 runaway，idx 7）。**关键：显式 `--max-model-len 32768`**（模型默认 256K，KV 需 64GB 装不下）。**iluvatar 同模型受 8192 上下文限制只拿 70.0% 不达标，摩尔 4 倍上下文直接翻盘（+8pt）**。⚠ 多模态只测了文本路径；198 题全量待跑。报告：[[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled]] |
+| Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | gpqa_diamond 75 | ✅ 已达标 | **50 题筛查 78.0%（39/50），相对退化 −4.00%，退出码 0**（1 个 runaway，idx 7）。**关键：显式 `--max-model-len 32768`**（模型默认 256K，KV 需 64GB 装不下）。**iluvatar 同模型受 8192 上下文限制只拿 70.0% 不达标，摩尔 4 倍上下文直接翻盘（+8pt）**。⚠ 多模态只测了文本路径；198 题全量待跑。报告：[[reports/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled_report]] |
 | Qwen3.5-27B-Derestricted | mmlu 89.98 / math_500 84.8 | 📋 待开始 | |
 | Turkish-Gemma-9b-v0.1 | mmlu 75.19 / math_500 53.6 | 📋 待开始 | 服务启动未通过 |
 | gemma-2-27b-it | gpqa_diamond 48 | 📋 待开始 | |
@@ -194,30 +290,33 @@
 
 > 更新：2026-09-21
 
-- **精度已通过**：**3 / 50**（50 题筛查口径）—— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
-  `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled`
-- **精度不达标**：**1 / 50** —— `reka-flash-3`（50.0%，两种基准都超容差）
+- **精度已通过**：**4 / 50**（50 题筛查口径）—— `Phi-4-reasoning-plus` / `LFM2.5-1.2B-Thinking` /
+  `Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled` / `reka-flash-3`（基准取 NV 原生 53.54）
+- **精度不达标**：**0 / 50**
 - **服务已起/冒烟通过**：**4 / 50**，全部一次通过
-- **50 题筛查已完成**：**4 / 4**（原计划的四个模型全部出分）
-- **198 题全量定稿**：**0 / 4**（⬅ 下一步）
+- **50 题筛查已完成**：**4 / 4**（含 reka 的 5 轮重复）
+- **198 题全量定稿**：**0 / 4**（⬅ 下一步，reka 尤其必须）
 - **待开始**：42 / 50
 
-### 当前 GPU 占用（mthreads-25，2026-09-21 复查）
+### 当前 GPU 占用（mthreads-25，2026-09-21 17:40）
 
-| 卡 | 服务 | 端口 | max_model_len | 实测显存 |
-|----|------|:----:|:-------------:|:--------:|
-| GPU0 | Phi-4-reasoning-plus | 8000 | 32768 | 73799 MiB |
-| GPU1 | LFM2.5-1.2B-Thinking | 8001 | 32768 | 73868 MiB |
-| GPU2 | reka-flash-3 | 8002 | **24576** | 73744 MiB |
-| GPU3 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 8003 | 32768 | 73395 MiB |
-| GPU4–7 | **空闲（4 张，0 MiB）** | — | — | — |
+| 卡 | 服务 | 容器 | 端口 | max_model_len | 实测显存 |
+|----|------|------|:----:|:-------------:|:--------:|
+| GPU0 | reka-flash-3（新容器 `r2`） | `flagrelease-fix-reka-flash-3-r2` | 8004 | 24576 | 73779 MiB |
+| GPU1 | reka-flash-3（新容器 `r3`） | `flagrelease-fix-reka-flash-3-r3` | 8005 | 24576 | 73744 MiB |
+| GPU2 | **空闲（0 MiB）** | —（老容器已停） | — | — | — |
+| GPU3 | reka-flash-3（新容器 `r4`） | `flagrelease-fix-reka-flash-3-r4` | 8006 | 24576 | 73744 MiB |
+| GPU4–7 | **空闲（4 张，0 MiB）** | — | — | — | — |
 
-> 4 个服务均以 `--enforce-eager` 运行（**摩尔 graph 模式不可用**，见下「评测前必须改的服务侧设置」），
-> 首都测试全部通过（均正确答「北京」）。评测参数总表见 [[EVAL_SETTINGS]]。
+> 三个服务均 TP=1、`--enforce-eager`、`--gpu-memory-utilization 0.9`。
+> **已停止的容器（`docker stop`，退出码 137；保留未删，可 `docker start` 原样恢复）**：
+> `flagrelease-fix-phi-4-reasoning-plus`、`flagrelease-fix-LFM2.5-1.2B-Thinking`、
+> `flagrelease-fix-qwen3.5-27b`（2026-09-21 释放显存）、
+> **`flagrelease-fix-reka-flash-3`（老容器，2026-09-21 停用，见「🔬 重复性实验」）**。
+> 权重、日志、评测产物都在 `/datapool` 上，不受容器停止影响。
 >
-> 💡 **容量参考（2026-09-21 实测）**：每服务 TP=1 独占 1 卡（`--gpu-memory-utilization 0.9` 实占 ~73.7GB/80GB）。
-> 当前 4 卡在跑 + 4 卡空闲。**若停掉其中 3 个服务，可再起 7 个同规格（TP=1）服务**——
-> 一台机最多 8 个「一模型一卡」的服务。想在同一张卡上多开，必须显式下调 `--gpu-memory-utilization`。
+> 💡 **容量参考**：每服务 TP=1 独占 1 卡（实测 ~73.7GB/80GB）。**一台机最多 8 个「一模型一卡」的服务**；
+> 想在同一张卡上多开必须显式下调 `--gpu-memory-utilization`。当前 3 卡在跑 + 5 卡空闲。
 
 ### 权重下载进度（`/datapool/flagrelease/fixes_models/`）
 
@@ -227,7 +326,7 @@
 |------|------|------|------|
 | Phi-4-reasoning-plus | 28 GB | `Phi3ForCausalLM`（dense GQA） | ✅ 已下 → ✅ 50 题达标 |
 | LFM2.5-1.2B-Thinking | 2.2 GB | `Lfm2ForCausalLM`（混合 SSM） | ✅ 已下 → ✅ 50 题达标 |
-| reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 → ❌ 50 题不达标 |
+| reka-flash-3 | 39 GB | `LlamaForCausalLM`（44 层/hidden 6144） | ✅ 已下 → ✅ 50 题达标（重复实验改判） |
 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | 52 GB | `Qwen3_5ForConditionalGeneration`（多模态+MTP，11 分片） | ✅ 已下 → ✅ 50 题达标 |
 
 ### 评测环境（✅ 已全部就绪并跑通，不再是阻塞项）
@@ -238,10 +337,12 @@
 | 评测脚本 + 离线数据集 | ✅ 已部署到 `/datapool/flagrelease/eval_scripts/` 与 `evalscope-datasets/`（gpqa_diamond 亲测可用） |
 | **4 个一对一 eval 容器** | ✅ **已建好并验收**，各自的 `context.yaml` 全部生效（详见 [[EVAL_INFRA]]） |
 | **评测设置定稿** | ✅ **已完成** —— 见 [[EVAL_SETTINGS]]（含「评测参数总表」温度/top_p/top_k/is-think） |
-| 跑分进度 | ✅ **50 题筛查已完成**（4/4 出分：3 达标 / 1 不达标）；⬜ **198 题全量待跑** |
+| 跑分进度 | ✅ **50 题筛查已完成**（4/4 出分，**4 个全部达标**）；⬜ **198 题全量待跑** |
 
 > **环境侧已无阻塞。** 评测入口与命令见 [[EVAL_INFRA]]，逐模型参数见 [[EVAL_SETTINGS]]。
-> **下一步只需把 `--limit 50` 去掉（`--limit 0` = 全量 198）重跑四个模型**，服务与 eval 容器都还在。
+> **下一步只需把 `--limit 50` 去掉（`--limit 0` = 全量 198）重跑四个模型**：
+> reka 的 4 个服务在跑，另 3 个需先 `docker start` 恢复容器。
+> ⚠️ **reka 定稿务必用 198 题** —— 实测 50 题口径噪声达 8pt，比 5% 容差还宽。
 
 ### ⚠ 评测前必须改的服务侧设置（来自厂商案例 + 本机实测）
 
@@ -249,6 +350,6 @@
 |---|------|------|------|:----:|
 | 1 | ⚠️ **不要改 graph** —— 摩尔必须用 `--enforce-eager` | 全部 | **本机实测：去掉 `--enforce-eager` 后 4 个模型全部启动失败**（`MUSA driver error: operation not permitted when stream is capturing`）。metax 的「graph 快 10 倍」在摩尔不适用 | ✅ 已执行 |
 | 2 | reka-flash-3 的 `--max-model-len` 32768 → **24576** | 仅该模型 | 使 `max_tokens=16384`，对齐 metax v6 / NV 复现口径 | ✅ 已改 |
-| 3 | reka-flash-3 判定基准改用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定 | ✅ 已执行（**两种基准都不达标**） |
+| 3 | reka-flash-3 判定基准采用 **NV 原生实测 53.54**（非表中 59） | 仅该模型 | metax 基准取值裁定（53.54 为 NV 原生 198 题亲手复现值；59 出自 NV 失败报告、口径不符） | ✅ 已执行 —— 54.8% 反超 1.26pt（相对 +2.35%）→ **达标** |
 | 4 | 4 个模型评测前补 `context.yaml`（含 `thinking_model: true`） | 全部 | 3 个模型名不含关键词不会被自动识别为 thinking | ✅ 已执行，`[gen]` 行确认生效 |
 | 5 | **「开启算子列表」以容器 `/tmp/flaggems_enable_oplist.txt` 实测为准**（文件名 `oplist` 连写） | 全部 | **白名单 ≠ 实际触达**：Qwen3.5 白名单 3 个、实测只触达 1 个 | ✅ 4 个模型均已记录 |

@@ -93,7 +93,7 @@ INFO 09-20 14:32:01 Application startup complete.          # 起服务 35 秒
 # GPU: MTT S5000, 1 × 80GB
 # TP: 1
 # VERDICT: ok
-# METRIC: GPQA_Diamond
+# METRIC: gpqa_diamond
 # SCORE_ORIGIN: 29.0
 # SCORE_FLAGOS: 32.0
 # CONTAINER_DEVS: --privileged --shm-size=64g
