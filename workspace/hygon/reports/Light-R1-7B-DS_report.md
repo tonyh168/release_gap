@@ -80,17 +80,25 @@ MATH-500抽样必须记录per-subset语义、每级题数与每级分数。reaso
 # EVAL_QUESTIONS: 50
 # SCORE_ORIGIN: 94
 # SCORE_FLAGOS: 92
-# CONTAINER_DEVS: --security-opt seccomp=unconfined --security-opt label=disable --device=/dev/kfd --device=/dev/dri --shm-size=64g --group-add=video -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
+# CONTAINER_DEVS: --security-opt seccomp=unconfined --security-opt label=disable --device=/dev/kfd --device=/dev/dri --shm-size=64g --group-add=video --mount type=bind,src=/public-flash/models,dst=/models --mount type=bind,src=/opt/hyhal,dst=/opt/hyhal,readonly
 ```
 
 ### 二、容器创建（宿主机执行）
 
 ```bash
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/public-flash/models}"
+HYHAL_ROOT="${HYHAL_ROOT:-/opt/hyhal}"
+[[ -d "$MODEL_ROOT" ]] || { echo "ERROR: model root not found: $MODEL_ROOT" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib" ]] || { echo "ERROR: Hygon driver library not found: $HYHAL_ROOT/lib" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib/cmake/rocm_smi" ]] || echo "WARNING: rocm_smi CMake directory not found under $HYHAL_ROOT; verify the host driver version" >&2
+
 docker run --init -d --net=host --ipc=host \
   --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
-  -v /public-flash/models:/models \
-  -v /opt/hyhal:/opt/hyhal:ro \
+  --mount type=bind,src="$MODEL_ROOT",dst=/models \
+  --mount type=bind,src="$HYHAL_ROOT",dst=/opt/hyhal,readonly \
   --name day0-light-r1-7b-ds \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
   bash -lc 'sleep infinity'
@@ -117,14 +125,26 @@ group: video
 ### 四、启动服务
 
 ```bash
-export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk
-export HIP_PATH=/opt/dtk/hip
-export HSA_PATH=/opt/dtk/hsa
-export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
-export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
-export LD_LIBRARY_PATH=/opt/dtk/dcc/gcvm/lib:/opt/dtk/hip/lib:/opt/dtk/llvm/lib:/opt/dtk/lib:/opt/dtk/lib64:/opt/hyhal/lib:/opt/hyhal/lib64:/opt/dtk/dushmem/lib:/opt/dtk/opencl/lib:/opt/dtk/.hyhal/rocm_smi/lib:/usr/local/lib:/usr/local/lib64:/opt/mpi/lib
+set -euo pipefail
 
+MODEL_DIR="${MODEL_DIR:-/models/Light-R1-7B-DS}"
+DTK_ENV="${DTK_ENV:-/opt/dtk/env.sh}"
+if [[ ! -r "$DTK_ENV" ]]; then
+  DTK_ENV="$(find /opt -maxdepth 4 -type f -path '*/dtk*/env.sh' -print -quit 2>/dev/null || true)"
+fi
+[[ -r "$DTK_ENV" ]] || { echo "ERROR: DTK env.sh not found; check the selected image" >&2; exit 1; }
+source "$DTK_ENV"
+
+if [[ -z "${TRITON_HIP_CLANG_PATH:-}" ]]; then
+  if [[ -x /opt/dtk/aillvm/bin/clang-18 ]]; then
+    TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
+  else
+    TRITON_HIP_CLANG_PATH="$(find /opt -maxdepth 6 -type f -path '*/aillvm/bin/clang-18' -perm -111 -print -quit 2>/dev/null || true)"
+  fi
+fi
+[[ -x "${TRITON_HIP_CLANG_PATH:-}" ]] || { echo "ERROR: clang-18 not found in the container" >&2; exit 1; }
+export TRITON_HIP_CLANG_PATH
+[[ -d "$MODEL_DIR" ]] || { echo "ERROR: model directory not found: $MODEL_DIR" >&2; exit 1; }
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export HIP_VISIBLE_DEVICES=5
@@ -132,14 +152,11 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=attention_backend
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
 export VLLM_FL_OOT_ENABLED=0
 
-/usr/bin/python3 /usr/local/bin/vllm serve /models/Light-R1-7B-DS \
+/usr/bin/python3 /usr/local/bin/vllm serve "$MODEL_DIR" \
   --served-model-name Light-R1-7B-DS \
   --dtype bfloat16 \
   --tensor-parallel-size 1 \

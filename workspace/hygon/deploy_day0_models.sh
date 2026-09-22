@@ -137,7 +137,6 @@ for index in "${!MODELS[@]}"; do
     -e "HSA_PATH=/opt/dtk/hsa"
     -e "DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode"
     -e "TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18"
-    -e "VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/${model}"
     -e "GEMS_VENDOR=hygon"
     -e "VLLM_PLUGINS=fl"
     -e "HIP_VISIBLE_DEVICES=${gpu}"
@@ -159,7 +158,7 @@ for index in "${!MODELS[@]}"; do
     exec_env+=(-e "VLLM_FL_OOT_ENABLED=0")
   fi
   docker exec -d "${exec_env[@]}" "${container}" bash -lc \
-    "mkdir -p '/models/triton_cache/${model}' && source '${DTK_ENV}' && exec vllm serve '/models/${model}' \
+    "source '${DTK_ENV}' && exec vllm serve '/models/${model}' \
       --served-model-name '${model}' \
       --dtype bfloat16 \
       --tensor-parallel-size 1 \

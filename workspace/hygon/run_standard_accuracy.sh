@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -u
 
-# The evaluator is CPU-side, but importing Hygon torch requires the same DTK
-# runtime paths as the model service processes.
-export LD_LIBRARY_PATH=/opt/dtk/dcc/gcvm/lib:/opt/dtk/hip/lib:/opt/dtk/llvm/lib:/opt/dtk/lib:/opt/dtk/lib64:/opt/hyhal/lib:/opt/hyhal/lib64:/opt/dtk/dushmem/lib:/opt/dtk/opencl/lib:/opt/dtk/.hyhal/rocm_smi/lib:/usr/local/lib:/usr/local/lib64:/opt/mpi/lib:/opt/hwloc/lib
+# The evaluator is CPU-side, but importing Hygon torch requires the image DTK environment.
+DTK_ENV="${DTK_ENV:-/opt/dtk/env.sh}"
+[[ -r "${DTK_ENV}" ]] || { echo "DTK env not found: ${DTK_ENV}" >&2; exit 1; }
+source "${DTK_ENV}"
 export PYTHONPATH=/usr/local/
 cd /models/day0_eval
 

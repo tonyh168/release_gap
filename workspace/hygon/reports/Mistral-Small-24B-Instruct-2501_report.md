@@ -34,7 +34,7 @@
 **最终服务参数**
 
 - 镜像：`harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist`（image id `sha256:4b2a93440c3c8bc9230d6774c417e46e85211229696cb73b2141b1cd682758e4`）
-- 启动前 `source /opt/dtk/env.sh`，否则容器内 `torch` 找不到 `libgalaxyhip.so.5`。
+- 启动脚本会先检查并加载镜像内实际存在的 DTK `env.sh`；找不到时直接报错，不会继续启动服务。
 - 沿用历史失败报告的 26 项算子白名单：
 
 ```text
@@ -151,17 +151,25 @@ python3 fast_gpqa.py \
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 54
 # SCORE_FLAGOS: 52.0
-# CONTAINER_DEVS: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size=64g -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
+# CONTAINER_DEVS: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size=64g --mount type=bind,src=/public-flash/models,dst=/models --mount type=bind,src=/opt/hyhal,dst=/opt/hyhal,readonly
 ```
 
 ### 二、容器创建（宿主机执行）
 
 ```bash
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/public-flash/models}"
+HYHAL_ROOT="${HYHAL_ROOT:-/opt/hyhal}"
+[[ -d "$MODEL_ROOT" ]] || { echo "ERROR: model root not found: $MODEL_ROOT" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib" ]] || { echo "ERROR: Hygon driver library not found: $HYHAL_ROOT/lib" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib/cmake/rocm_smi" ]] || echo "WARNING: rocm_smi CMake directory not found under $HYHAL_ROOT; verify the host driver version" >&2
+
 docker run --init -d --net=host --ipc=host \
   --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
-  -v /public-flash/models:/models \
-  -v /opt/hyhal:/opt/hyhal:ro \
+  --mount type=bind,src="$MODEL_ROOT",dst=/models \
+  --mount type=bind,src="$HYHAL_ROOT",dst=/opt/hyhal,readonly \
   --name Mistral-Small-24B-Instruct-2501_flagos \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
   bash -lc 'sleep infinity'
@@ -170,18 +178,34 @@ docker run --init -d --net=host --ipc=host \
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk/env.sh
+set -euo pipefail
+
+MODEL_DIR="${MODEL_DIR:-/models/Mistral-Small-24B-Instruct-2501}"
+DTK_ENV="${DTK_ENV:-/opt/dtk/env.sh}"
+if [[ ! -r "$DTK_ENV" ]]; then
+  DTK_ENV="$(find /opt -maxdepth 4 -type f -path '*/dtk*/env.sh' -print -quit 2>/dev/null || true)"
+fi
+[[ -r "$DTK_ENV" ]] || { echo "ERROR: DTK env.sh not found; check the selected image" >&2; exit 1; }
+source "$DTK_ENV"
+
+if [[ -z "${TRITON_HIP_CLANG_PATH:-}" ]]; then
+  if [[ -x /opt/dtk/aillvm/bin/clang-18 ]]; then
+    TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
+  else
+    TRITON_HIP_CLANG_PATH="$(find /opt -maxdepth 6 -type f -path '*/aillvm/bin/clang-18' -perm -111 -print -quit 2>/dev/null || true)"
+  fi
+fi
+[[ -x "${TRITON_HIP_CLANG_PATH:-}" ]] || { echo "ERROR: clang-18 not found in the container" >&2; exit 1; }
+export TRITON_HIP_CLANG_PATH
+[[ -d "$MODEL_DIR" ]] || { echo "ERROR: model directory not found: $MODEL_DIR" >&2; exit 1; }
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-Small-24B-Instruct-2501
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
-vllm serve /models/Mistral-Small-24B-Instruct-2501 \
+vllm serve "$MODEL_DIR" \
   --host 0.0.0.0 \
   --served-model-name Mistral-Small-24B-Instruct-2501 \
   --dtype bfloat16 \

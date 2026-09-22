@@ -42,14 +42,23 @@ SQLite autotune 数据库锁导致 53/198 后崩溃；评测临时容器被清�
 # METRIC: gpqa_diamond
 # SCORE_ORIGIN: 48
 # SCORE_FLAGOS: 29.80
-# CONTAINER_DEVS: --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro
+# CONTAINER_DEVS: --security-opt seccomp=unconfined --device=/dev/kfd --device=/dev/dri --shm-size=64g --mount type=bind,src=/public-flash/models,dst=/models --mount type=bind,src=/opt/hyhal,dst=/opt/hyhal,readonly
 ```
 
 ### 二、容器创建（宿主机执行）
 
 ```bash
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/public-flash/models}"
+HYHAL_ROOT="${HYHAL_ROOT:-/opt/hyhal}"
+[[ -d "$MODEL_ROOT" ]] || { echo "ERROR: model root not found: $MODEL_ROOT" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib" ]] || { echo "ERROR: Hygon driver library not found: $HYHAL_ROOT/lib" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib/cmake/rocm_smi" ]] || echo "WARNING: rocm_smi CMake directory not found under $HYHAL_ROOT; verify the host driver version" >&2
+
 docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --security-opt label=disable --group-add video --device=/dev/kfd --device=/dev/dri --shm-size=64g \
-  -v /public-flash/models:/models -v /opt/hyhal:/opt/hyhal:ro \
+  --mount type=bind,src="$MODEL_ROOT",dst=/models \
+  --mount type=bind,src="$HYHAL_ROOT",dst=/opt/hyhal,readonly \
   --name flagos-hygon-sarvam-m \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4-blacklist \
   bash -lc 'sleep infinity'
@@ -58,8 +67,28 @@ docker run --init -d --net=host --ipc=host --security-opt seccomp=unconfined --s
 ### 三、启动服务（容器内执行）
 
 ```bash
+set -euo pipefail
+
+MODEL_DIR="${MODEL_DIR:-/models/sarvam-m}"
+DTK_ENV="${DTK_ENV:-/opt/dtk/env.sh}"
+if [[ ! -r "$DTK_ENV" ]]; then
+  DTK_ENV="$(find /opt -maxdepth 4 -type f -path '*/dtk*/env.sh' -print -quit 2>/dev/null || true)"
+fi
+[[ -r "$DTK_ENV" ]] || { echo "ERROR: DTK env.sh not found; check the selected image" >&2; exit 1; }
+source "$DTK_ENV"
+
+if [[ -z "${TRITON_HIP_CLANG_PATH:-}" ]]; then
+  if [[ -x /opt/dtk/aillvm/bin/clang-18 ]]; then
+    TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
+  else
+    TRITON_HIP_CLANG_PATH="$(find /opt -maxdepth 6 -type f -path '*/aillvm/bin/clang-18' -perm -111 -print -quit 2>/dev/null || true)"
+  fi
+fi
+[[ -x "${TRITON_HIP_CLANG_PATH:-}" ]] || { echo "ERROR: clang-18 not found in the container" >&2; exit 1; }
+export TRITON_HIP_CLANG_PATH
+[[ -d "$MODEL_DIR" ]] || { echo "ERROR: model directory not found: $MODEL_DIR" >&2; exit 1; }
 export VLLM_PLUGINS=fl
 export VLLM_FL_FLAGOS_BLACKLIST=cat,slice
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-vllm serve /models/sarvam-m --served-model-name sarvam-m --dtype bfloat16 --tensor-parallel-size 2 --max-model-len 32768 --gpu-memory-utilization 0.9 --port 8100 --attention-backend TRITON_ATTN --no-enable-chunked-prefill --no-enable-prefix-caching --enforce-eager --trust-remote-code
+vllm serve "$MODEL_DIR" --served-model-name sarvam-m --dtype bfloat16 --tensor-parallel-size 2 --max-model-len 32768 --gpu-memory-utilization 0.9 --port 8100 --attention-backend TRITON_ATTN --no-enable-chunked-prefill --no-enable-prefix-caching --enforce-eager --trust-remote-code
 ```

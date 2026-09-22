@@ -109,8 +109,6 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-7B-OpenOrca
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 ```
@@ -127,7 +125,7 @@ export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,in
 
 本次没有重新构建、重新打 tag 或推送镜像，也没有修改 vLLM、vllm-plugin-FL 或 FlagGems 源码。运行时新增内容主要包括：
 
-- 独立 Triton 缓存目录；
+- Triton 默认缓存；
 - 部署、服务和评测日志；
 - EvalScope 预测、报告及汇总 JSON。
 
@@ -200,7 +198,7 @@ http://127.0.0.1:8001/v1
 1. 使用统一 Hygon 新镜像和单卡 GPU3；
 2. 保留历史 26 项 FlagGems 白名单；
 3. 固定 `TRITON_ATTN`、BF16、TP=1 和 eager 模式；
-4. 使用独立 Triton 缓存目录；
+4. 沿用 Triton 默认缓存目录；
 5. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA 全量 198 题；
 6. 记录 runaway 数量，并与 NV 记录值按同一比较脚本判定。
 

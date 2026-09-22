@@ -97,8 +97,6 @@ export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Phi-3-medium-128k-instruct
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 ```
 
 健康检查：
@@ -120,7 +118,7 @@ curl http://127.0.0.1:8000/v1/models
 
 本次没有重新构建、重新打 tag 或推送镜像，也没有修改 vLLM、`vllm-plugin-FL` 或 FlagGems 源码。运行时新增内容主要包括：
 
-- 独立 Triton 缓存目录；
+- Triton 默认缓存；
 - 服务日志；
 - EvalScope 预测、报告、汇总 JSON 和 NV 对比 JSON。
 
@@ -255,7 +253,7 @@ Phi-3-medium-128k-instruct:
 2. 使用 `HIP_VISIBLE_DEVICES=0,1`，不设置 `ROCR_VISIBLE_DEVICES`；
 3. 固定 `TRITON_ATTN`、BF16、TP=2 和 eager 模式；
 4. 显式设置 `TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18`；
-5. 使用独立 Triton 缓存目录；
+5. 沿用 Triton 默认缓存目录；
 6. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond 50 题；
 7. 使用 `accuracy_compare.py` 与 NV 记录值按 5% 相对退化门限比较。
 

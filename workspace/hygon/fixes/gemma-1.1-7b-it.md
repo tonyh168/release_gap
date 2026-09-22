@@ -95,8 +95,6 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/gemma-1.1-7b-it
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 
 export VLLM_FL_FLAGOS_WHITELIST=add,addmm_out,arange_start,argmax,broadcast_to,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 
@@ -110,7 +108,7 @@ export VLLM_FL_OOT_ENABLED=0
 - VLLM_FL_FLAGOS_WHITELIST 固定本轮使用的普通 FlagGems 算子集合；
 - VLLM_FL_OOT_ENABLED=0 关闭 vllm-plugin-FL 高层 OOT 注册路径；
 - VLLM_FL_OOT_BLACKLIST=silu_and_mul 保留配置追溯；
-- VLLM_FL_TRITON_CACHE_ROOT 使用模型独立的 Triton 编译缓存目录。
+- 未设置 `VLLM_FL_TRITON_CACHE_ROOT`，沿用 Triton 默认缓存。
 
 vLLM 实际初始化配置中：
 

@@ -132,15 +132,13 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/MiniCPM4-8B
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,broadcast_to,copy_,cos,cumsum,cumsum_out,expand,full,index,le,linear,lt_scalar,masked_fill_,mm_out,ones,rand_like,reciprocal,rsub_scalar,scatter_,sin,softmax,softmax_out,sub,sum_dim,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 ```
 
 环境变量说明：
 
 - `TRITON_HIP_CLANG_PATH` 显式使用 DTK clang-18；
-- `VLLM_FL_TRITON_CACHE_ROOT` 使用 MiniCPM4-8B 独立 Triton 缓存；
+- 未设置 `VLLM_FL_TRITON_CACHE_ROOT`，沿用 Triton 默认缓存；
 - `VLLM_FL_FLAGOS_WHITELIST` 固定本轮普通 FlagGems 算子集合；
 - 当前服务进程没有显式设置 `VLLM_FL_OOT_ENABLED`、`VLLM_FL_OOT_BLACKLIST` 或 `VLLM_FL_USE_FLAGGEMS_ATTN`。
 

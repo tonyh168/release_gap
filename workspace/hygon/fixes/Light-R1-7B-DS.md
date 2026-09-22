@@ -147,8 +147,6 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
 
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=attention_backend
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
 export VLLM_FL_OOT_ENABLED=0

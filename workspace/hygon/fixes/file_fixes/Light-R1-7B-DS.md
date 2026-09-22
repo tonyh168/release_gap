@@ -73,8 +73,6 @@ fast_gpqa_genconfig_fixed.py
 export VLLM_FL_FLAGOS_WHITELIST=attention_backend
 export VLLM_FL_USE_FLAGGEMS_ATTN=0
 export VLLM_FL_OOT_ENABLED=0
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 ```
 
 对应语义：
@@ -87,7 +85,7 @@ FL OOT 不启用
 普通 FlagGems 算子不加入白名单
 ```
 
-`FLAGGEMS_DB_URL=sqlite:///:memory:`只使用内存数据库，不产生持久数据库文件。Triton编译缓存会写入 `/models/triton_cache`，该目录位于模型共享挂载内。
+`FLAGGEMS_DB_URL=sqlite:///:memory:`只使用内存数据库，不产生持久数据库文件。本轮不设置 `VLLM_FL_TRITON_CACHE_ROOT`，沿用 Triton 默认缓存。
 
 ## 复现命令
 
@@ -120,7 +118,7 @@ docker exec day0-eval-standard env \
 | `/models/day0_eval/fast_gpqa_genconfig_fixed.py` | 新增模型参数映射；本轮实际评测入口 |
 | `/models/Light-R1-7B-DS` | 模型权重、配置、tokenizer未修改 |
 | vLLM / plugin-FL / FlagGems源码 | 未修改 |
-| `/models/triton_cache/Light-R1-7B-DS-fix-whitelist-attn-oot-off` | 本轮服务的Triton运行缓存 |
+| Triton 默认缓存 | 本轮未覆盖缓存根目录 |
 | `/models/logs/` | 复现时的服务日志目录 |
 | `/models/accuracy/` | 复现时的评测日志、结果、退出状态目录 |
 | `/models/day0_eval/outputs/math_500/20260918_045356` | 50题predictions、reviews、TaskConfig和HTML报告 |

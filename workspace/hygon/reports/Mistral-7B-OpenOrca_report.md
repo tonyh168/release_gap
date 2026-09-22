@@ -46,7 +46,7 @@ shm-size: 64 GiB
 1. 使用统一 Hygon 新镜像和单卡 GPU3；
 2. 保留历史失败报告的 26 项 FlagGems 白名单（不新增、不删减）；
 3. 固定 `TRITON_ATTN`、BF16、TP=1 和 eager 模式；
-4. 使用独立 Triton 缓存目录；
+4. 沿用 Triton 默认缓存目录；
 5. 使用 EvalScope `1.5.1`、固定并发 4，执行 GPQA Diamond **全量 198 题**；
 6. 记录 runaway 数量，并与 NV 记录值按同一比较脚本判定。
 7. 环境变量沿用本机实测的 DTK/FlagOS 组合（`DTK_HOME`/`ROCM_PATH`/`HIP_PATH`/`HSA_PATH`/`DEVICE_LIB_PATH`/`TRITON_HIP_CLANG_PATH` + `GEMS_VENDOR=hygon` + `VLLM_PLUGINS=fl` + spawn + 7200s 超时）；未显式设置 `VLLM_FL_OOT_ENABLED`、`VLLM_FL_OOT_BLACKLIST`、`VLLM_FL_FLAGOS_BLACKLIST`，沿用镜像默认 OOT 行为。
@@ -126,11 +126,19 @@ shm-size: 64 GiB
 ### 二、容器创建（宿主机执行）
 
 ```bash
+set -euo pipefail
+
+MODEL_ROOT="${MODEL_ROOT:-/public-flash/models}"
+HYHAL_ROOT="${HYHAL_ROOT:-/opt/hyhal}"
+[[ -d "$MODEL_ROOT" ]] || { echo "ERROR: model root not found: $MODEL_ROOT" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib" ]] || { echo "ERROR: Hygon driver library not found: $HYHAL_ROOT/lib" >&2; exit 1; }
+[[ -d "$HYHAL_ROOT/lib/cmake/rocm_smi" ]] || echo "WARNING: rocm_smi CMake directory not found under $HYHAL_ROOT; verify the host driver version" >&2
+
 docker run --init -d --net=host --ipc=host \
   --security-opt seccomp=unconfined --security-opt label=disable --group-add video \
   --device=/dev/kfd --device=/dev/dri --shm-size=64g \
-  -v /public-flash/models:/models \
-  -v /opt/hyhal:/opt/hyhal:ro \
+  --mount type=bind,src="$MODEL_ROOT",dst=/models \
+  --mount type=bind,src="$HYHAL_ROOT",dst=/opt/hyhal,readonly \
   --name day0-mistral-7b-openorca \
   harbor.baai.ac.cn/flagrelease-public/flagtree-hcu-py310-torch2.10.0-dtk26.04-ubuntu22.04:202608-3.6-vllm0.24.0-xingcgen4 \
   bash -lc 'sleep infinity'
@@ -139,23 +147,34 @@ docker run --init -d --net=host --ipc=host \
 ### 三、启动服务（容器内执行）
 
 ```bash
-source /opt/dtk/env.sh
-export DTK_HOME=/opt/dtk
-export ROCM_PATH=/opt/dtk
-export HIP_PATH=/opt/dtk/hip
-export HSA_PATH=/opt/dtk/hsa
-export DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
-export TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
+set -euo pipefail
+
+MODEL_DIR="${MODEL_DIR:-/models/Mistral-7B-OpenOrca}"
+DTK_ENV="${DTK_ENV:-/opt/dtk/env.sh}"
+if [[ ! -r "$DTK_ENV" ]]; then
+  DTK_ENV="$(find /opt -maxdepth 4 -type f -path '*/dtk*/env.sh' -print -quit 2>/dev/null || true)"
+fi
+[[ -r "$DTK_ENV" ]] || { echo "ERROR: DTK env.sh not found; check the selected image" >&2; exit 1; }
+source "$DTK_ENV"
+
+if [[ -z "${TRITON_HIP_CLANG_PATH:-}" ]]; then
+  if [[ -x /opt/dtk/aillvm/bin/clang-18 ]]; then
+    TRITON_HIP_CLANG_PATH=/opt/dtk/aillvm/bin/clang-18
+  else
+    TRITON_HIP_CLANG_PATH="$(find /opt -maxdepth 6 -type f -path '*/aillvm/bin/clang-18' -perm -111 -print -quit 2>/dev/null || true)"
+  fi
+fi
+[[ -x "${TRITON_HIP_CLANG_PATH:-}" ]] || { echo "ERROR: clang-18 not found in the container" >&2; exit 1; }
+export TRITON_HIP_CLANG_PATH
+[[ -d "$MODEL_DIR" ]] || { echo "ERROR: model directory not found: $MODEL_DIR" >&2; exit 1; }
 export GEMS_VENDOR=hygon
 export VLLM_PLUGINS=fl
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=7200
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=7200
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-7B-OpenOrca
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
-vllm serve /models/Mistral-7B-OpenOrca \
+vllm serve "$MODEL_DIR" \
   --served-model-name Mistral-7B-OpenOrca \
   --dtype bfloat16 \
   --tensor-parallel-size 1 \

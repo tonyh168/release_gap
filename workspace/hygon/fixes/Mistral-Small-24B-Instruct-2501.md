@@ -117,8 +117,6 @@ source /opt/dtk/env.sh
 export HIP_VISIBLE_DEVICES=2,3,4,7
 export VLLM_PLUGINS=fl
 export FLAGGEMS_DB_URL=sqlite:///:memory:
-export VLLM_FL_TRITON_CACHE_ROOT=/models/triton_cache/Mistral-Small-24B-Instruct-2501
-mkdir -p "$VLLM_FL_TRITON_CACHE_ROOT"
 export VLLM_FL_FLAGOS_WHITELIST=add,arange_start,argmax,copy_,cos,expand,full,index,linear,lt_scalar,mm_out,ones,rand_like,randn,reciprocal,sin,softmax,softmax_out,sub,to_copy,true_divide,true_divide_,where_self,where_self_out,zero_,zeros
 ```
 
