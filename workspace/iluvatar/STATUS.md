@@ -1,12 +1,18 @@
 # Iluvatar 模型修复状态总览
 
-> 更新：2026-09-20 00:40（graph 模式跑通，**Fathom 与 MiroThinker 双双达标**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
+> 更新：2026-09-21 22:26（**Qwen2.5-72B-Instruct 达标 —— 计数 10 → 11 通过**）| 机器：iluvatar-139 + iluvatar-147 | 镜像：`xingchen4-0907`
 
 ## 当前计数
 
-**10 通过 / 6 跳过 / 2 待继续修复 = 18**
+**11 通过 / 6 跳过 / 2 待继续修复 = 19**
 
-- **✅ 已通过（10）**、**⏭️ 跳过无需修复（6）**：见状态表，**均以机器上 `verdict_*.json` 的 `aligned` 字段核对过**
+- **✅ 已通过（11）**、**⏭️ 跳过无需修复（6）**：见状态表，**均以机器上 `verdict_*.json` 的 `aligned` 字段核对过**
+- **✅ Qwen2.5-72B-Instruct 已达标**（2026-09-21 新增对象，当轮完成）：
+  **GPQA 56.0% vs 基线 56.0%，相对退化 0.00%，`aligned=true`**（exit=0）。50 题全量，
+  **runaway 0/50、truncation=False**，是一次**干净达标**。
+  配置：TP=8 / `TRITON_ATTN` / mlen=32768 / **graph 模式**（未回退 eager）/ 采样取模型自带
+  `generation_config.json`。中途修掉 **5 个无人值守脚本 bug**（v2 空跑 + v3 评测阶段三个），
+  详见下方专节与 `fixes/Qwen2.5-72B-Instruct.md`。
 - **🔧 待继续修复（2）** —— 两者都在排除法上走到尽头，剩余差距无法归因：
   - ❌ **OpenReasoning-Nemotron-1.5B** — math_500 **76.0%** vs 84.0%（↓9.52%）。
     **iter4 抬 `max_tokens` 到 65536 → 无效（76.5%→76.0%）**，**截断假设被证伪**。
@@ -104,6 +110,15 @@
    （MiroThinker 的 `top_k=20` 即如此）。**只看请求 payload 会漏判。**
    ⚠️ 由此需修正早先的说法：**"`generation_config.json` 覆盖机制失效"只对 `fast_gpqa` 的客户端路径成立**
    （`_resolve_model_dir()` 两条路径不通）；**服务端 vLLM 那条路是通的**。
+   ✅ **2026-09-21 客户端那条路已打通**：新增 `fast_gpqa.py --model-dir`（见下方专节），
+   现在可以显式指定模型权重目录，采样参数按 `generation_config.json` 走。**Qwen2.5-72B 已实测生效。**
+
+9. 🔴 **无人值守 driver 的失败会伪装成"还在进行中"**（2026-09-21，Qwen2.5-72B 一轮踩了 5 个）。
+   5 个 bug 形状完全一致：**重定向失败=静默不执行 / pgrep 自匹配=永远活着 / 僵尸进程=永远活着 /
+   `docker exec` 缺 `-i`=静默无输出 / `_split_datasets` 缺 None 守卫=静默走错分支**。
+   后果分别是「服务看起来起不来」（实际从未启动）和「评测看起来卡住」（实际早已失败）。
+   **对策：凡等待，都要校验一个能证伪的独立正向证据**（进程在 + 日志非空 + 输出文件写出），
+   而不是只信单一返回值。详见「复盘：无人值守 driver 的 5 个脚本 bug」节与 `_shared/KNOWLEDGE.md` 第七节。
 
 > **0918 ~ 0920 状态收敛**：达标者标 ✅ 已通过，未达标者标 ⏭️ 跳过（无需修复），不再投入。
 > 所有判定均以机器上 `verdict_*.json`（`aligned` 字段）为证据核对过。
@@ -150,16 +165,129 @@
 | OpenReasoning-Nemotron-1.5B | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 52.21 / 84.0 | mmlu 35.0%（iter1）; math_500 76.5%（iter2）→ 73.5%（iter3 thinking）→ **76.0%（iter4 抬 mt=65536，↓9.52%）** | `flagrelease-fix-openreasoning-nemotron-1.5b` GPU 0 / :8011 (u139) | **五项假设全部排除**（权重 sha256 一致 / 上下文 131072 / 并发 / 采样 iter3 反降 / **截断 iter4 抬上限无效**）。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度（逐组开关黑名单做对照）；mmlu 需干净重测**。⚠️ 别再调 max_tokens/采样 |
 | Phi-4-mini-reasoning | 🔧 待继续修复 | 无原始失败报告（后补评测对象） | mmlu / math_500 | 72.83 / 88.2 | mmlu 58.07%（iter1，**受 2048 截断污染**）/ math_500 41.0%（同污染）→ 59.5%（iter3，`--max-model-len 32768` + c8）→ **62.0%（iter4，T=0.8/0.95，↓29.71%）** | `flagrelease-fix-phi4-mini-reasoning` GPU 9 / :8012 (u139) | **截断已修**（+18.5pt）；**采样已修但只 +2.5pt** —— 复读 31→2（−94%）、撞顶 32→9（−72%），**行为改善巨大但分数没上来** → **采样不是主因**。`verdict_math500_iter4.json` exit=1。**下一步：查算子精度；mmlu 需干净重测**。⚠️ 别再调采样/max_model_len |
 | Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled | ✅ 已通过 | 未开始 | gpqa_diamond | 75.0 | iter1: **70.0**（↓6.67%）→ iter2: **80.0**（↑6.67%，反超基线）| `flagrelease-fix-qwen3.5-27b` GPU 5,6 / :8014 (u139) | 完成，达标。iter2 配置：sort,sort_stable,mm,addmm，TRITON_ATTN，TP=2，`--max-model-len 65536`（iter1 为 8192，把 max_tokens 压到 4096）。verdict 为 2026-09-18 实跑重建（`verdict_gpqa_iter2.json`，exit=0） |
+| Qwen2.5-72B-Instruct | ✅ 已通过 | 未开始（2026-09-21 新增对象） | gpqa_diamond | 56.0 | **56.0**（相对退化 **0.00%**，`aligned=true`，exit=0） | `flagrelease-fix-qwen2.5-72b-instruct` GPU 0-7 / :8015 (u139) | **完成，达标（干净：runaway 0/50、truncation=False）**。Qwen2 dense GQA（80层/hidden 8192/8 KV heads），bf16 **136 GB** → **TP=8**；`TRITON_ATTN`（非 MLA）；**standard 分支（非推理模型，不套 thinking wrapper）**；mlen=32768；**graph 模式成功（未回退 eager）**，单请求解码 **~18 tok/s**；**采样取模型自带 `generation_config.json`**（temp 0.7 / top_p 0.8 / top_k 20 / rp 1.05，靠新加的 `--model-dir` 生效，已三层验证）。50 题 **9.7 分钟**（并发 8）。**原定 117，当日 117 被占用 → 改用 139** |
+
+---
+
+## 已完成：Qwen2.5-72B-Instruct（2026-09-21，新对象 → 当轮达标）
+
+**结果**：GPQA Diamond **56.0% vs NV 基线 56.0%**，相对退化 **0.00%**，`aligned=true`（exit=0）。
+50 题全量、**runaway 0/50**、**truncation=False** —— **一次干净达标**，没有任何"勉强"成分
+（对比 MiroThinker 那种 runaway 70% 仍判达标的成色）。
+
+| 项 | 值 |
+|----|----|
+| 服务模式 | **`SERVE_MODE=graph`**（未回退 eager） |
+| 启动耗时 | **5 分 10 秒**（加载 37 分片 ~2min + compile 37s + 图捕获 22s） |
+| KV cache | 222,352 tokens（32768/请求下最大并发 6.79×） |
+| 解码吞吐 | 单请求 **~18 tok/s**（graph；GPU util ~71%、功耗 237W）；并发 8 时聚合到 ~49 tok/s |
+| 评测耗时 | **579 秒（9.7 分钟）**，并发 8，探测 15.6s |
+| 采样 | `temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05`（模型自带 gen config） |
+| max_tokens | 24576（`clamp(32768-8192, 4096, 32768)`） |
+
+**⭐ 结论价值（对后续 dense 模型）**：72B dense 在 graph 模式 + 扩黑名单
+（`sort,sort_stable,mm,addmm,broadcast_to`）下**能顺利图捕获并按 5 分钟级启动**，
+且**单请求吞吐比 14B（Fathom 18.97 tok/s）只慢 7%** —— 说明「去掉 `--enforce-eager`」
+这条经验**对更大的 dense 模型同样成立**，不是小模型专属。
+若当初回退 eager（按 5.4~8.7× 损失估），单请求约 2 tok/s，50 题要跑好几天。
+
+**⚠️ 一个观察点（留待后续）**：`--cudagraph-capture-sizes 16` 只捕获了 **1/1** 个尺寸
+（预期 1,2,4,8,16 一组）。本次并发 8 仍跑出 49 tok/s 聚合、评测 9.7 分钟完成，
+**未构成瓶颈**；但若后续遇到并发上不去的情况，这是第一个该查的点。
+
+**本轮修掉的 5 个无人值守脚本 bug**（全部与模型/平台无关，详见下方两节）：
+v2 的「宿主机路径当容器路径用」+「pgrep 自匹配」→ vLLM 从未启动（空跑两轮 30 分钟）；
+v3 评测阶段的「`kill -0` 测不出僵尸进程」+「`docker exec` 缺 `-i` 吞 heredoc」+
+「`_split_datasets()` 缺 None 守卫 → `未知数据集 ['None']`」。
+**5 个 bug 同一形状：失败被伪装成"还在进行中"。** 教训已进 `_shared/KNOWLEDGE.md` 第七节。
+
+---
+
+## 复盘：无人值守 driver 的 5 个脚本 bug（**已全部修复，对象已达标**）
+
+> **同一形状：失败被伪装成"还在进行中"。** 5 个 bug 全部与模型/算子/平台无关，
+> 却先后把流程拖成「看起来服务起不来」（v2）和「评测卡住不结束」（v3）。
+> 最终 v4 跑通，Qwen2.5-72B-Instruct **56.0% 达标（退化 0.00%）**。
+
+### v2：两个 bug 让 vLLM **从未启动**（空跑两轮 30 分钟）
+
+- **现象（2026-09-21 19:26~20:27）**：v2 driver 报 graph 超时 → 回退 eager → 又超时 →
+  `driver end (FAILED)`。看上去"两种模式都起不来"。
+- **实际**：**vLLM 一次都没被启动过**。8 张卡全程空闲（`ixsmi` 68MiB/卡），
+  容器里没有任何 `vllm serve` 进程，serve 日志从未生成。权重完好（37/37 分片，136 GB）。
+- **根因 1（致命）**：**宿主机路径当容器路径用**。v2 用 `$RUNLOG=/mnt/share/models/release_run_logs/...`
+  做重定向 `> $RUNLOG/serve_graph.log`，但修复容器只挂了 `/mnt/share/models -> /models`，
+  容器内**没有 `/mnt/share`** → bash 打开重定向失败 → **整条 `nohup vllm serve` 根本没执行**。
+  driver 自己的 `tail -30 serve_graph.log` 报 `No such file or directory` 就是铁证。
+- **根因 2**：存活检查 `docker exec $CT bash -c 'pgrep -f "vllm serve"'` **自匹配**
+  （父 `bash -c` 的 cmdline 里就含 `vllm serve`，pgrep 不排除它）→ 恒为真 →
+  "进程消失"永远测不出来，两轮各空等 30 分钟。
+- **修复（v3，`/root/qwen25-72b-driver.sh`，NFS 副本 `driver_v3.sh`）**：
+  ① 容器内一律用 `/models/...` 写日志；② 存活检查改 `pgrep -f "[v]llm serve"`；
+  ③ **启动后 90 秒硬校验**（进程在 + 日志非空），不合格立刻失败，不再空等；
+  ④ 评测加 `--model-dir`。**实测 5 秒即通过硬校验**，服务真起来了。
+- **提炼**：已进 `_shared/KNOWLEDGE.md` 第七节。**教训："超时未就绪"必须先分清"在加载"还是"根本没起来"**
+  —— 用 pgrep 确认进程、`ls` 确认日志文件，再谈模型/算子问题。
+
+### v3：服务起来了（`SERVE_MODE=graph`），但评测阶段又栽 3 个 bug
+
+| # | 现象 | 根因 | 修复 |
+|:-:|------|------|------|
+| B1 | 评测算死了，轮询却一直以为在跑（4a 本会空等 40min、4b 空等 12h） | `kill -0 $EPID` 对**僵尸进程**（`STAT=Z`）**仍返回 0**；实测 `1852 Z [python3] <defunct> PPID=1` | 判活改 `pgrep -f "[f]ast_gpqa"`，并**用"输出文件是否写出"区分"跑完"与"崩了"** |
+| B2 | "单请求吞吐实测"永远不打印 | `docker exec` 不带 `-i` → **heredoc 的 stdin 被静默吞掉**（还被 `\|\| true` 掩盖） | 改 `docker exec -i`（实测对照：带 `-i` 打印，不带则零输出） |
+| B3 | 评测 1 秒退出：`[ERROR] 未知数据集: ['None']` | 部署版 `_split_datasets()` 缺 `if raw is None: return []`，`str(None)="None"` 非空 → 返回 `['None']`（真值）→ `or config.get('dataset','gpqa_diamond')` 兜底**永不触发** | 脚本补回 None 守卫（NFS + eval-scope + 仓库三处同步）；driver 侧同时**显式传 `--dataset gpqa_diamond`** 双保险 |
+
+> ⚠️ **B3 影响面最大**：**SOP 第 4 节的评测命令模板本身就没写 `--dataset`**，照抄 SOP 即踩。
+> 已在 fix log 与 KNOWLEDGE 标注，后续脚本模板建议一律显式写数据集名。
+
+**附带发现**：评测日志重定向到文件时 python 是**块缓冲**，运行中 `tail` 看不到内容
+（也是"进度看起来不动"的假象之一）。要实时进度得给 `python3` 加 `-u`。
+
+### v4：复用 v3 已起的 graph 服务，只重跑评测 —— 一次通过
+
+- **不重启服务**（省 5 分钟 + 保住 graph 结论），从冒烟 + 4a 小样本接着跑
+- 新增「启动宽限 60s」+「进程消失即判定结果」，任何失败在 1 分钟内暴露
+- 新增 **4a 小样本（`--limit 2`）先验**：先确认链路与 `[gen]` 采样行，再跑 50 题全量
+- **4a 3 分钟通过 → 4b 9.7 分钟出分 → verdict exit=0，达标**
+
+**通用教训（已进 KNOWLEDGE 第七之二节）**：无人值守脚本里**每一个"等待/判断"都必须有
+"失败了会怎样"的快速路径**。这 5 个 bug 的共同形状是 **失败被伪装成"还在进行中"**
+（重定向失败=静默不执行、自匹配=永远活着、僵尸=永远活着、空 stdin=静默无输出、
+`['None']`=静默走错分支）。对策：凡等待，都要同时校验**一个独立的、能证伪的正向证据**
+（进程存在 + 日志非空 + 输出文件写出），而不是只信单一返回值。
+
+---
+
+## 新增能力：`fast_gpqa.py --model-dir`（采样参数取模型自带 generation_config.json）
+
+- **背景**：`resolve_gen_params()` 早有"采纳模型 `generation_config.json` 采样字段"的逻辑
+  （`_GEN_PARAM_WHITELIST = temperature/top_p/top_k/repetition_penalty`），但 `_resolve_model_dir()`
+  只在 `--model-name` 是**本地目录路径**或存在 `/flagos-workspace/shared/context.yaml` 时才生效。
+  流水线里 `--model-name` 是 NV key（如 `Qwen2.5-72B-Instruct`）→ **永远定位不到模型目录 → 静默回退默认**。
+- **改动（2026-09-21）**：新增 `--model-dir` 选项，显式指定模型权重目录（容器内路径），
+  优先级高于 `--model-name`。**纯增量，不传时行为与改动前完全一致**（不动其它模型已出分数的可比性）。
+- **文件**：NFS 规范副本 `/mnt/share/models/flagrelease/eval_methods/fast_gpqa.py`
+  （旧版备份 `fast_gpqa.py.bak-v0930-2155`），已 `docker cp` 到 139 的 `eval-scope:/workspace/eval_scripts/`；
+  仓库副本 `flagrelease_eval_methods/fast_gpqa.py` 同步打了同样的补丁。
+- **实测验证**（容器内）：
+  ```
+  不传 --model-dir: temperature=0.0, top_p=1.0            ← 贪心（旧行为）
+  传   --model-dir: temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05   ← 模型自带配置
+  ```
+- **用法**：`python3 fast_gpqa.py --model-name <NV key> --api-base ... \
+  --model-dir /models/flagrelease/fixes_models/<模型名> --output ...`
+- ⚠️ **注意可比性**：以后凡是传了 `--model-dir` 的评测，采样口径就变成"模型自带配置"，
+  与 0919~0920 那批（手写 0.6/0.95 或贪心）**不是同一口径**，跨轮对比时要注明。
 
 ---
 
 ## 当前进度快照
 
-> 更新：2026-09-20 00:40（graph 模式跑通，Fathom 与 MiroThinker 双双达标）
+> 更新：2026-09-21 22:26（**Qwen2.5-72B-Instruct 达标**，计数 10 → 11；graph 模式结论已确认）
 
-- **✅ 精度已通过：10 / 18** — LFM2.5-1.2B-Thinking（32.0 vs 29.0）、LFM2.5-1.2B-Instruct（40.0 vs 29.0）、OpenThinker-7B（mmlu 75.0/77.0 + math 86.5/88.0）、Marco-o1（28.0 vs 32.0，小样本噪声容忍）、Qwen3-30B-A3B-Thinking-2507（76.0 vs 75.0）、AgentCPM-Report（49.49 vs 46.0，198题全量）、Qwen3.5-27B-Distilled（80.0 vs 75.0）、TinyR1-32B-Preview（62.0 vs 64.0）、**Fathom-R1-14B（68.0 vs 60.0，↑13.33%）**、**MiroThinker-v1.5-30B（30.0 vs 25.0，↑20.00%，但 runaway 70% 未解决）**
-- **⏭️ 跳过（无需修复）：6 / 18** — gemma-1.1-7b-it（22.0 vs 37.0）、NeuralDaredevil-8B-abliterated（30.0→22.0 vs 37.0）、Phi-3-medium-128k-instruct（24.0 vs 37.0）、QwQ-32B（56.0 vs 63.0）、AgentCPM-Explore（服务未起）、Ministral-8B-Instruct-2410（镜像依赖链缺陷）
-- **🔧 待继续修复：2 / 18** — 见下节
+- **✅ 精度已通过：11 / 19** — LFM2.5-1.2B-Thinking（32.0 vs 29.0）、LFM2.5-1.2B-Instruct（40.0 vs 29.0）、OpenThinker-7B（mmlu 75.0/77.0 + math 86.5/88.0）、Marco-o1（28.0 vs 32.0，小样本噪声容忍）、Qwen3-30B-A3B-Thinking-2507（76.0 vs 75.0）、AgentCPM-Report（49.49 vs 46.0，198题全量）、Qwen3.5-27B-Distilled（80.0 vs 75.0）、TinyR1-32B-Preview（62.0 vs 64.0）、**Fathom-R1-14B（68.0 vs 60.0，↑13.33%）**、**MiroThinker-v1.5-30B（30.0 vs 25.0，↑20.00%，但 runaway 70% 未解决）**、**Qwen2.5-72B-Instruct（56.0 vs 56.0，退化 0.00%，runaway 0/50，干净达标）**
+- **⏭️ 跳过（无需修复）：6 / 19** — gemma-1.1-7b-it（22.0 vs 37.0）、NeuralDaredevil-8B-abliterated（30.0→22.0 vs 37.0）、Phi-3-medium-128k-instruct（24.0 vs 37.0）、QwQ-32B（56.0 vs 63.0）、AgentCPM-Explore（服务未起）、Ministral-8B-Instruct-2410（镜像依赖链缺陷）
+- **🔧 待继续修复：2 / 19** — 见下节
 
 ### 🔧 待继续修复的 2 个模型 —— 状态与可执行下一步
 
@@ -242,20 +370,21 @@
   会同时改变**所有**模型的采样（OpenThinker-7B / Marco-o1 的 0.0→0.7），需连带复核这两个模型的"达标"结论。
 
 
-### 🟡 服务运行状态（**截至 2026-09-20 01:00：全部项目容器已停，16 张卡全部释放**）
+### 🟡 服务运行状态（**截至 2026-09-21 22:26：Qwen2.5-72B 评测已完成，服务仍在运行**）
 
-> **139 与 147 上的项目容器均已 `docker stop`（未删除，文件系统保留，`docker start` 可恢复）。**
-> **139 只剩 `eval-scope` 在运行（不占 GPU）；147 全停。**
-> **所有 GPU 均已释放**（139 的 16 张卡均为 68MiB 基线）。
+> **139 上除 Qwen2.5-72B 外的项目容器均已 `docker stop`（未删除，文件系统保留，`docker start` 可恢复）。**
+> **147 全停。** `eval-scope` 在运行（不占 GPU）。
 >
-> 下表是**历史服务位记录**，用于说明每个模型曾经占用哪张卡/哪个端口，**当前均未运行**。
-> ⚠️ 重启服务前请先读各自 fix log 的「graph 模式启动」节 —— **去掉 `--enforce-eager`** 是
-> 本环境多数模型提速的关键（Fathom 5.4×、MiroThinker 8.7×），且 **Fathom 需黑名单加 `broadcast_to`**。
+> ⚠️ **2026-09-21 22:26 起新增占用**：`flagrelease-fix-qwen2.5-72b-instruct` 仍在运行，
+> **占 GPU 0-7、端口 8015**（graph 模式，TP=8，KV cache 222,352 tokens）——
+> **评测已完成（56.0% 达标），服务按流程未自动停**。GPU 8-15 空闲。
+> 如需释放全部 16 张卡，`docker stop flagrelease-fix-qwen2.5-72b-instruct` 即可（可 `docker start` 恢复）。
 
 **iluvatar-139**
 
 | 模型 | GPU | 端口 | 数据集 | attention-backend | 状态 |
 |------|:---:|:----:|:------:|:-----------------:|------|
+| **Qwen2.5-72B-Instruct** | **0-7** | **8015** | gpqa_diamond | TRITON_ATTN | 🟢 **运行中**（graph 模式 TP=8，2026-09-21 22:03 起）—— ✅ **已完成：56.0%，退化 0.00%，达标**，runaway 0/50 |
 | **Fathom-R1-14B** | **0-7** | **8002** | gpqa_diamond | TRITON_ATTN | ⏹️ **已停**（graph 模式 TP=8）—— ✅ iter5 完成：**68.0%，达标**，runaway 0/50 |
 | **MiroThinker-v1.5-30B** | **8-15** | **8001** | gpqa_diamond | TRITON_ATTN | ⏹️ **已停**（graph 模式 TP=8）—— ✅ iter5 完成：**30.0%，达标（勉强）**，⚠️ runaway 35/50 |
 | **OpenReasoning-Nemotron-1.5B** | **0** | **8011** | math_500 (200题) | TRITON_ATTN | ⏹️ **已停**（iter4 完成：76.0%，↓9.52%，verdict exit=1） |
@@ -317,7 +446,7 @@ ssh iluvatar-139 'for c in flagrelease-fix-fathom-r1-14b flagrelease-fix-mirothi
 
 ## 待继续修复的 2 个模型：推进状态（0919 ~ 0920）
 
-现状：**10 通过 / 6 跳过 / 2 待继续修复**。各模型的分数与已排除的假设见上方
+现状：**11 通过 / 6 跳过 / 2 待继续修复**。各模型的分数与已排除的假设见上方
 「🔧 待继续修复的 2 个模型」表。
 
 | 顺序 | 模型 | 状态 | 本轮结果 |

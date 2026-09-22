@@ -8,11 +8,17 @@
 ## 0. 前置
 
 - 硬件：天数 BI 系列（corex 生态），单机多卡。参考模型 XingChen4 用 **TP=8**（`CUDA_VISIBLE_DEVICES=8..15`）。
-- 宿主机（ssh 免密直连）：`iluvatar-117` `iluvatar-211`。
+- 宿主机（ssh 免密直连）：`iluvatar-117` `iluvatar-211` `iluvatar-139` `iluvatar-147`（**2026-09-21 起主力 139**；当日 117 被他人占用）。
   ```bash
-  ssh iluvatar-117
-  ixsmi   # 天数查卡：看每卡显存/进程；这机器一般独占，但有占用先问清楚再用，别抢卡
+  ssh iluvatar-139
+  /usr/local/corex-4.5.0/bin/ixsmi   # ⚠️ 天数查卡：PATH 里没有 ixsmi，必须写全路径
   ```
+  > ⚠️ **容器内没有 `ixsmi`**（xingchen4-0907 镜像实测，`find / -name "*smi*"` 无果）。
+  > 容器内查卡改用 torch：
+  > ```bash
+  > python -c "import torch; [print(i, torch.cuda.get_device_properties(i).name, round(torch.cuda.get_device_properties(i).total_memory/1024**3,1)) for i in range(torch.cuda.device_count())]"
+  > ```
+  > 139 实测 16 × Iluvatar BI-V150 32 GB。这机器一般独占，但有占用先问清楚再用，别抢卡。
 - 镜像：`harbor.baai.ac.cn/flagrelease-public/iluvatar-corex4.5.0-flagtree0.6.0-triton3.6.0-cxnone-vllm_fl0.24.0:2026082-xingchen4-0907`（corex4.5.0 / flagtree0.6.0 / triton3.6.0 / vllm_fl 0.24.0）。
 - 共享存储（NFS）：iluvatar 所有机器的 NFS 挂载点均为宿主机 `/mnt/share/`，模型目录为 `/mnt/share/models/`。起容器时统一用 `-v /mnt/share/models:/models`，容器内访问路径 `/models`（如 `/models/flagrelease/fixes_models/QwQ-32B`）。
 
@@ -151,8 +157,15 @@ cd /workspace/release_评测标准
 
 model_name=<与起服务时相同的 NV key>
 # 指标默认 gpqa_diamond；若该模型无 gpqa 基线，换 --dataset math_500 / mmlu 并同步 --metric
+# ⚠️ --dataset 一定要显式写：不写会踩 `_split_datasets(None) → ['None'] → 未知数据集` 的坑
+#    （脚本已补 None 守卫，但显式写更稳，且换指标时不会被默认值掩盖）
+# ⚠️ --model-dir 指向模型权重目录（容器内路径）：给了才会用模型自带 generation_config.json
+#    的采样参数；不给则按脚本默认（standard 贪心 / thinking 0.6，0.95）。
+#    判据：评测日志出现 `[gen] 采用模型 generation_config.json 采样参数: {...}` 才算生效。
 python3 fast_gpqa.py --model-name ${model_name} \
   --api-base http://127.0.0.1:8000/v1 \
+  --dataset gpqa_diamond \
+  --model-dir /models/flagrelease/fixes_models/${model_name} \
   --output /models/release_run_logs/${model_name}/gpqa.json
 python3 accuracy_compare.py \
   --v2 /models/release_run_logs/${model_name}/gpqa.json \

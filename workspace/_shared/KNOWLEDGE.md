@@ -362,19 +362,74 @@
 - 两次对比评测**必须用完全相同的参数**，否则结果不可比。
 - 评测期间**不要同时跑性能测试**，两者抢 GPU 会污染精度。
 - `truncation_detected: true` 说明输出被 max_tokens 截断，分数偏低不可信；需加大 `--max-model-len` 后重跑。
-- **`max_tokens` 无法通过 CLI 指定**（脚本设计禁止，由 `auto_max_tokens()` 按
-  `max_model_len - 8192` 自适应，且截断检测还会自动翻倍）。需间接控制时，
-  调**服务端 `--max-model-len`** 即可：如要 max_tokens=16384，就把 `--max-model-len` 设为 24576。
 
-- **引用历史报告的"性能比"前先确认基线来源**：摩尔线程的报告里大量出现
-  `baseline_source: v2_initial_x1.2`（用 V2 初始性能 ×1.2 合成 V1 基线），
-  Phi-3.5-mini 等报告明确标注"性能基线为合成值，非实测 V1"。
-  这类比值只能当参考，**不能当达标依据**；本轮判定一律以 `accuracy_compare.py` 退出码为准。
-  **来源**：mthreads/Phi-3.5-mini-instruct、Darwin-28B-Coder、iFlow-ROME 等报告
+---
 
-- **long-CoT 模型在慢速芯片上会先撞评测预算，再谈精度**：
-  摩尔 `OpenReasoning-Nemotron-7B` 在 V2 全量算子下 mmlu 只跑到 427/1140 就到预算上限；
-  `Apodex-1.0-4B-SFT` 同样是 V2 起单题耗时显著变长后未闭环。
-  处置：显式固定 `--max-tokens` + `--eval-batch-size`（受控 A/B），必要时先只跑 `--limit 0` 的
-  小子集确认稳定性，再决定是否跑全量；不要用"跑不完"直接判芯片不达标。
-  **来源**：mthreads/OpenReasoning-Nemotron-7B、mthreads/Apodex-1.0-4B-SFT
+## 七、无人值守 driver 脚本（自动起服务/评测）
+
+> 背景：人退出 session 后，流程交给宿主机上的 `driver.sh` 自动跑（等下载 → 起 vLLM → 冒烟 → 评测 → verdict）。
+> 下面两条是 2026-09-21 Qwen2.5-72B-Instruct **连续空等两轮 30 分钟、driver FAILED** 的根因，
+> 两条都会**伪装成"服务起不来/平台不稳"**，实际 vLLM 一次都没被启动过。
+
+- **现象**：driver 日志里 graph 与 eager 都"超时未就绪"，`docker inspect` 一切正常、卡也全空，serve 日志却永远不存在。
+  **根因**：**宿主机路径当容器路径用**。`docker exec $CT bash -c "nohup vllm serve ... > $RUNLOG/serve.log"` 里的
+  `$RUNLOG` 若是宿主机路径（如 `/mnt/share/...`），而容器只挂了 `-v /mnt/share/models:/models`
+  （容器内**没有** `/mnt/share`），则 bash 打开重定向失败 → **整条命令根本没执行**，也没有任何报错。
+  **处置**：凡是在 `docker exec` 里用的路径，一律写成**容器内路径**（`/models/...`）；
+  宿主机侧只用 `/mnt/share/...` 读日志。**判据**：driver 自己 `tail serve_*.log` 报
+  `No such file or directory` 就说明路径写错了，不要继续等。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **现象**：进程早就没了，存活检查却永远返回"活着"，于是一路空等到超时。
+  **根因**：`docker exec $CT bash -c 'pgrep -f "vllm serve"'` 会**自匹配** —— pgrep 只排除自己，
+  不排除父 `bash -c`，而后者的命令行里就含 `vllm serve` 这串，恒返回 0。
+  **处置**：用不自匹配的写法 `pgrep -f "[v]llm serve"`（字符类让模式串自身不命中），
+  并且**启动后加 90 秒硬校验**（进程在 **且** 日志文件非空），不合格立刻 FAIL，别给 30 分钟超时。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **通用教训**：**"超时未就绪"必须先分清"在加载"还是"根本没起来"**。
+  用 `pgrep` 确认进程、`ls -la` 确认日志文件存在且在增长，再谈是不是模型太大/算子有问题。
+  这两条一起出现时，浪费的不是几分钟，而是两轮 30 分钟 + 一次人工介入。
+
+### 七之二、同一批 driver 在**评测阶段**暴露的三个 bug（2026-09-21 当晚补）
+
+> 服务起来后（`SERVE_MODE=graph`），driver 进到评测阶段又栽了三个跟上面同源的坑。
+
+- 🔴 **B1：`kill -0` 判活测不出"评测算死了"，只会空等满超时。**
+  **现象**：评测进程早已退出，轮询却一直认为它在跑（4a 本会空等 40 分钟、4b 空等 12 小时）。
+  **根因**：`docker exec eval-scope bash -c "kill -0 $EPID"` 对**僵尸进程**（`STAT=Z`）**仍返回 0**。
+  容器里 `python3` 秒退后没人回收 → 变僵尸（实测 `1852 Z [python3] <defunct> PPID=1`）→ 检查恒为真。
+  **处置**：① 判活改用 `pgrep -f "[f]ast_gpqa"`（按模式匹配真实进程，不看 PID）；
+  ② **并用"输出文件是否写出"区分"正常跑完"与"中途崩了"** —— 进程消失后若结果 JSON 不存在即为失败。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- 🔴 **B2：`docker exec` 不带 `-i` 会**静默吞掉** heredoc 的 stdin。**
+  **现象**：driver 里那段"单请求吞吐实测"永远不打印结果，日志里只剩一行分隔标题。
+  **根因**：`docker exec` 默认不转发 stdin，`docker exec CT python3 - <<'PYEOF'` 的脚本**根本没传进去**，
+  python 读空 stdin 直接退出，**无任何报错**（之前还被 `|| true` 掩盖）。
+  **处置**：用 `docker exec -i`。实测：带 `-i` 打印 `HEREDOC_OK`，不带则一行输出都没有。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- 🔴 **B3：`fast_gpqa.py` 不传 `--dataset` 时**评测秒退**（脚本本体 bug，已修）。**
+  **现象**：`[ERROR] 未知数据集: ['None']（可选: ['gpqa_diamond', 'mmlu', 'math_500', 'mm_star']）`，
+  进程 1 秒内退出，什么都没产出。
+  **根因**：部署版 `_split_datasets()` 缺 `if raw is None: return []`：
+  ```python
+  parts = raw if isinstance(raw, list) else [raw]   # raw=None → [None]
+  return [p.strip() for part in parts for p in str(part).split(',') if p.strip()]  # → ['None']
+  ```
+  `str(None) == "None"` 恰好非空，于是返回 `['None']`（**真值**）→ 后面
+  `_split_datasets(args.dataset) or _split_datasets(config.get('dataset', 'gpqa_diamond'))`
+  的 `gpqa_diamond` 兜底**永远不触发** → 数据集名非法 → `sys.exit(1)`。
+  **⚠️ 影响面很大**：**SOP 第 4 节的评测命令模板本身就没写 `--dataset`**，照抄就会踩。
+  **处置**：① 脚本补回 None 守卫（NFS 规范副本 + `eval-scope:/workspace/eval_scripts/` 都已修）；
+  ② driver/手工命令一律**显式写 `--dataset gpqa_diamond`**（双保险，不依赖兜底逻辑）。
+  **来源**：iluvatar/Qwen2.5-72B-Instruct，2026-09-21
+
+- **这一节的通用教训（比上面三条更值钱）**：无人值守脚本里，**每一个"等待/判断"都必须有
+  "失败了会怎样"的快速路径**。三条 bug 的共同形状是——
+  **失败被伪装成"还在进行中"**（重定向失败=静默不执行、自匹配=永远活着、僵尸=永远活着、
+  空 stdin=静默无输出、`['None']`=静默走错分支）。
+  对策：凡是等待，都要同时校验**一个独立的、能证伪的正向证据**
+  （进程存在 + 日志非空 + 输出文件写出），而不是只信单一返回值。
+
